@@ -7,6 +7,8 @@ const Dashboard = ({ user }) => {
   const [overviewData, setOverviewData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [showModal, setShowModal] = useState(false);
   const navigate = useNavigate();
 
   const fetchOverviewData = async () => {
@@ -23,7 +25,6 @@ const Dashboard = ({ user }) => {
       
       if (!response.ok) {
         if (response.status === 401) {
-          // Unauthorized - redirect to login
           localStorage.removeItem('adminEmail');
           localStorage.removeItem('adminToken');
           navigate('/login');
@@ -46,9 +47,34 @@ const Dashboard = ({ user }) => {
     fetchOverviewData();
   }, []);
 
-  // Handle retry on error
   const handleRetry = () => {
     fetchOverviewData();
+  };
+
+  const handleViewDetails = (booking) => {
+    setSelectedBooking(booking);
+    setShowModal(true);
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-EG', {
+      style: 'currency',
+      currency: 'EGP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount || 0);
+  };
+
+  const formatTime = (timeString) => {
+    if (!timeString) return 'Anytime';
+    try {
+      return new Date(timeString).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return timeString;
+    }
   };
 
   if (loading) {
@@ -102,7 +128,7 @@ const Dashboard = ({ user }) => {
         <div className="glass-panel stat-card">
           <h3>Daily Revenue</h3>
           <p className="stat-value">
-            ${overviewData?.dailyRevenue?.toFixed(2) || '0.00'}
+            {formatCurrency(overviewData?.dailyRevenue)}
           </p>
           <span className="stat-label">Today's earnings</span>
         </div>
@@ -124,34 +150,89 @@ const Dashboard = ({ user }) => {
         </div>
       </div>
 
-      {/* Live Schedule */}
+      {/* Live Schedule - Enhanced Version */}
       <div className="glass-panel live-schedule">
         <div className="schedule-header">
           <h2>Today's Schedule</h2>
-          <span className="schedule-count">
-            {overviewData?.todaySchedule?.length || 0} bookings
-          </span>
+          <div className="schedule-controls">
+            <span className="schedule-count">
+              {overviewData?.todaySchedule?.length || 0} bookings
+            </span>
+            <button className="export-small-btn" onClick={() => {/* Export today's schedule */}}>
+              📋 Export
+            </button>
+          </div>
         </div>
         
-        <div className="schedule-list">
+        <div className="schedule-list detailed">
           {overviewData?.todaySchedule?.length > 0 ? (
             overviewData.todaySchedule.map((booking) => (
-              <div key={booking.id} className="schedule-item">
-                <div className="schedule-item-info">
-                  <span className="player-name">{booking.playerName}</span>
-                  <span className="court-info">
-                    <span className="court-badge">Court {booking.courtNumber}</span>
-                    <span className="booking-time">{booking.time || 'Anytime'}</span>
+              <div key={booking.id} className="schedule-card" onClick={() => handleViewDetails(booking)}>
+                <div className="schedule-card-header">
+                  <div className="time-badge">{formatTime(booking.time)}</div>
+                  <span className={`status-pill ${booking.status?.toLowerCase() || 'confirmed'}`}>
+                    {booking.status || 'Confirmed'}
                   </span>
                 </div>
-                <span className={`status-pill ${booking.status?.toLowerCase() || 'confirmed'}`}>
-                  {booking.status || 'Confirmed'}
-                </span>
+                
+                <div className="schedule-card-body">
+                  <div className="customer-info-detailed">
+                    <span className="customer-name-large">{booking.playerName}</span>
+                    {booking.phoneNumber && (
+                      <span className="customer-phone">{booking.phoneNumber}</span>
+                    )}
+                  </div>
+                  
+                  <div className="booking-details-grid">
+                    <div className="detail-item">
+                      <span className="detail-label">Court</span>
+                      <span className="detail-value">
+                        {booking.courtType || 'Padel'} • #{booking.courtNumber}
+                      </span>
+                    </div>
+                    
+                    <div className="detail-item">
+                      <span className="detail-label">Duration</span>
+                      <span className="detail-value">{booking.duration || 1} hour(s)</span>
+                    </div>
+                    
+                    <div className="detail-item">
+                      <span className="detail-label">Amount</span>
+                      <span className="detail-value price-highlight">
+                        {formatCurrency(booking.revenue)}
+                      </span>
+                    </div>
+                    
+                    <div className="detail-item">
+                      <span className="detail-label">Payment</span>
+                      <span className="detail-value">{booking.paymentMethod || 'Online'}</span>
+                    </div>
+                  </div>
+                  
+                  {booking.notes && (
+                    <div className="booking-notes">
+                      <span className="notes-label">📝</span>
+                      <span className="notes-text">{booking.notes}</span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="schedule-card-footer">
+                  <span className="booking-id">ID: {booking.id?.slice(-6)}</span>
+                  <button className="view-details-btn" onClick={(e) => {
+                    e.stopPropagation();
+                    handleViewDetails(booking);
+                  }}>
+                    View Details →
+                  </button>
+                </div>
               </div>
             ))
           ) : (
             <div className="empty-state">
+              <div className="empty-icon">📅</div>
               <p>No bookings scheduled for today</p>
+              <span className="empty-subtext">Check back later or view history</span>
             </div>
           )}
         </div>
@@ -186,6 +267,102 @@ const Dashboard = ({ user }) => {
           <span className="action-text">Refresh Data</span>
         </button>
       </div>
+
+      {/* Booking Details Modal */}
+      {showModal && selectedBooking && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Booking Details</h2>
+              <button className="close-modal" onClick={() => setShowModal(false)}>✕</button>
+            </div>
+            
+            <div className="modal-body">
+              <div className="detail-section">
+                <h3>Customer Information</h3>
+                <div className="detail-row">
+                  <span>Name:</span>
+                  <strong>{selectedBooking.playerName}</strong>
+                </div>
+                {selectedBooking.phoneNumber && (
+                  <div className="detail-row">
+                    <span>Phone:</span>
+                    <strong>{selectedBooking.phoneNumber}</strong>
+                  </div>
+                )}
+                {selectedBooking.email && (
+                  <div className="detail-row">
+                    <span>Email:</span>
+                    <strong>{selectedBooking.email}</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="detail-section">
+                <h3>Booking Information</h3>
+                <div className="detail-row">
+                  <span>Court:</span>
+                  <strong>{selectedBooking.courtType || 'Padel'} #{selectedBooking.courtNumber}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Date:</span>
+                  <strong>{new Date().toLocaleDateString()}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Time:</span>
+                  <strong>{formatTime(selectedBooking.time)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Duration:</span>
+                  <strong>{selectedBooking.duration || 1} hour(s)</strong>
+                </div>
+              </div>
+
+              <div className="detail-section">
+                <h3>Payment Information</h3>
+                <div className="detail-row">
+                  <span>Amount:</span>
+                  <strong className="price-large">{formatCurrency(selectedBooking.revenue)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Status:</span>
+                  <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'confirmed'}`}>
+                    {selectedBooking.status || 'Confirmed'}
+                  </span>
+                </div>
+                <div className="detail-row">
+                  <span>Method:</span>
+                  <strong>{selectedBooking.paymentMethod || 'Online'}</strong>
+                </div>
+              </div>
+
+              {selectedBooking.notes && (
+                <div className="detail-section">
+                  <h3>Notes</h3>
+                  <p className="notes-display">{selectedBooking.notes}</p>
+                </div>
+              )}
+
+              <div className="detail-section">
+                <h3>Booking ID</h3>
+                <code className="booking-id-full">{selectedBooking.id}</code>
+              </div>
+            </div>
+            
+            <div className="modal-footer">
+              <button className="modal-btn secondary" onClick={() => setShowModal(false)}>
+                Close
+              </button>
+              <button className="modal-btn primary" onClick={() => {
+                setShowModal(false);
+                // Navigate to edit or take action
+              }}>
+                Take Action
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
