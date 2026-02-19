@@ -152,148 +152,6 @@ const History = ({ user }) => {
     setShowModal(true);
   };
 
-  const exportToCSV = () => {
-    const headers = [
-      'Date', 'Time', 'Customer', 'Phone', 'Email', 
-      'Court Type', 'Court #', 'Duration', 'Revenue', 
-      'Status', 'Payment Method', 'Notes', 'Booking ID'
-    ];
-    
-    const csvData = filteredBookings.map(booking => [
-      formatDate(booking.date).split(',')[0],
-      formatDate(booking.date).split(',')[1]?.trim() || 'N/A',
-      booking.customerName,
-      booking.phoneNumber || 'N/A',
-      booking.email || 'N/A',
-      booking.courtType || 'Padel',
-      booking.courtNumber || '1',
-      `${booking.duration || 1} hour(s)`,
-      booking.revenue?.toFixed(2) || '0.00',
-      booking.status || 'paid',
-      booking.paymentMethod || 'Online',
-      booking.notes || '',
-      booking.id
-    ]);
-    
-    const csvContent = [headers, ...csvData]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `bookings-history-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-  };
-
-  const printReport = () => {
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>OKZ Sports - Booking History Report</title>
-          <style>
-            body { font-family: 'Inter', Arial, sans-serif; padding: 30px; background: #f5f5f7; }
-            .report-header { text-align: center; margin-bottom: 30px; }
-            h1 { color: #1d1d1f; margin-bottom: 5px; }
-            .summary-cards { display: flex; gap: 20px; margin: 20px 0; }
-            .summary-card { 
-              background: white; 
-              padding: 20px; 
-              border-radius: 16px; 
-              flex: 1;
-              box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-            }
-            .summary-card h3 { color: #86868b; font-size: 0.9rem; margin-bottom: 10px; }
-            .summary-card .value { font-size: 1.8rem; font-weight: bold; color: #1d1d1f; }
-            table { 
-              width: 100%; 
-              border-collapse: collapse; 
-              margin-top: 30px; 
-              background: white;
-              border-radius: 16px;
-              overflow: hidden;
-              box-shadow: 0 4px 12px rgba(0,0,0,0.02);
-            }
-            th { 
-              background: #0071e3; 
-              color: white; 
-              padding: 12px; 
-              text-align: left;
-              font-weight: 500;
-            }
-            td { 
-              padding: 12px; 
-              border-bottom: 1px solid #f5f5f7;
-            }
-            .footer { 
-              margin-top: 30px; 
-              text-align: right; 
-              color: #86868b;
-              font-size: 0.9rem;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="report-header">
-            <h1>OKZ Sports - Booking History Report</h1>
-            <p>Generated: ${new Date().toLocaleString()}</p>
-          </div>
-          
-          <div class="summary-cards">
-            <div class="summary-card">
-              <h3>Total Bookings</h3>
-              <div class="value">${filteredBookings.length}</div>
-            </div>
-            <div class="summary-card">
-              <h3>Total Revenue</h3>
-              <div class="value">${formatCurrency(filteredBookings.reduce((sum, b) => sum + (b.revenue || 0), 0))}</div>
-            </div>
-            <div class="summary-card">
-              <h3>Unique Players</h3>
-              <div class="value">${new Set(filteredBookings.map(b => b.customerName)).size}</div>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Date & Time</th>
-                <th>Customer</th>
-                <th>Court</th>
-                <th>Duration</th>
-                <th>Revenue</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filteredBookings.map(booking => `
-                <tr>
-                  <td>${formatDate(booking.date)}</td>
-                  <td>
-                    <strong>${booking.customerName}</strong><br>
-                    <small>${booking.phoneNumber || ''}</small>
-                  </td>
-                  <td>${booking.courtType || 'Padel'} #${booking.courtNumber || '1'}</td>
-                  <td>${booking.duration || 1} hour(s)</td>
-                  <td><strong>${formatCurrency(booking.revenue)}</strong></td>
-                  <td><span class="status-pill ${booking.status?.toLowerCase() || 'paid'}">${booking.status || 'Paid'}</span></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          
-          <div class="footer">
-            <p>Report generated by OKZ Admin Portal</p>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
-  };
-
   const totalRevenue = filteredBookings.reduce((sum, b) => sum + (b.revenue || 0), 0);
   const uniquePlayers = new Set(filteredBookings.map(b => b.customerName)).size;
   const averageBookingValue = filteredBookings.length > 0 ? totalRevenue / filteredBookings.length : 0;
@@ -472,7 +330,6 @@ const History = ({ user }) => {
               </th>
               <th>Payment</th>
               <th>Status</th>
-              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -520,22 +377,11 @@ const History = ({ user }) => {
                       {booking.status || 'Paid'}
                     </span>
                   </td>
-                  <td>
-                    <button 
-                      className="view-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRowClick(booking);
-                      }}
-                    >
-                      View
-                    </button>
-                  </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan="8" className="no-results">
+                <td colSpan="7" className="no-results">
                   <div className="empty-state">
                     <p>
                       {searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all'
@@ -563,39 +409,10 @@ const History = ({ user }) => {
         </table>
       </div>
 
-      {/* Export Options */}
-      <div className="export-actions">
-        <div className="export-stats">
-          <span>Showing {filteredBookings.length} of {bookings.length} bookings</span>
-        </div>
-        <div className="export-buttons">
-          <button 
-            className="glass-panel export-btn" 
-            onClick={exportToCSV}
-            disabled={filteredBookings.length === 0}
-          >
-            Export as CSV
-          </button>
-          <button 
-            className="glass-panel export-btn" 
-            onClick={printReport}
-            disabled={filteredBookings.length === 0}
-          >
-            Print Report
-          </button>
-          <button 
-            className="glass-panel export-btn" 
-            onClick={fetchHistory}
-          >
-            Refresh Data
-          </button>
-        </div>
-      </div>
-
       {/* Booking Details Modal */}
       {showModal && selectedBooking && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content glass-panel large" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Booking Details</h2>
               <button className="close-modal" onClick={() => setShowModal(false)}>✕</button>
@@ -677,9 +494,6 @@ const History = ({ user }) => {
             <div className="modal-footer">
               <button className="modal-btn secondary" onClick={() => setShowModal(false)}>
                 Close
-              </button>
-              <button className="modal-btn primary" onClick={() => setShowModal(false)}>
-                Mark as Actioned
               </button>
             </div>
           </div>

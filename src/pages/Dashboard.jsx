@@ -157,9 +157,6 @@ const Dashboard = ({ user }) => {
             <span className="schedule-count">
               {overviewData?.todaySchedule?.length || 0} bookings
             </span>
-            <button className="export-small-btn" onClick={() => {/* Export today's schedule */}}>
-              Export
-            </button>
           </div>
         </div>
         
@@ -265,7 +262,7 @@ const Dashboard = ({ user }) => {
       {/* Booking Details Modal */}
       {showModal && selectedBooking && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content glass-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Booking Details</h2>
               <button className="close-modal" onClick={() => setShowModal(false)}>✕</button>
@@ -354,9 +351,6 @@ const Dashboard = ({ user }) => {
             <div className="modal-footer">
               <button className="modal-btn secondary" onClick={() => setShowModal(false)}>
                 Close
-              </button>
-              <button className="modal-btn primary" onClick={() => setShowModal(false)}>
-                Take Action
               </button>
             </div>
           </div>
