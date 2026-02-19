@@ -1,4 +1,3 @@
-// src/pages/Dashboard.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../styles/Dashboard.css';
@@ -150,7 +149,7 @@ const Dashboard = ({ user }) => {
         </div>
       </div>
 
-      {/* Live Schedule - Enhanced Version */}
+      {/* Live Schedule */}
       <div className="glass-panel live-schedule">
         <div className="schedule-header">
           <h2>Today's Schedule</h2>
@@ -159,7 +158,7 @@ const Dashboard = ({ user }) => {
               {overviewData?.todaySchedule?.length || 0} bookings
             </span>
             <button className="export-small-btn" onClick={() => {/* Export today's schedule */}}>
-              📋 Export
+              Export
             </button>
           </div>
         </div>
@@ -211,7 +210,6 @@ const Dashboard = ({ user }) => {
                   
                   {booking.notes && (
                     <div className="booking-notes">
-                      <span className="notes-label">📝</span>
                       <span className="notes-text">{booking.notes}</span>
                     </div>
                   )}
@@ -230,7 +228,6 @@ const Dashboard = ({ user }) => {
             ))
           ) : (
             <div className="empty-state">
-              <div className="empty-icon">📅</div>
               <p>No bookings scheduled for today</p>
               <span className="empty-subtext">Check back later or view history</span>
             </div>
@@ -247,7 +244,6 @@ const Dashboard = ({ user }) => {
             alert('Schedule copied to clipboard!');
           }}
         >
-          <span className="action-icon">📋</span>
           <span className="action-text">Copy Schedule</span>
         </button>
         
@@ -255,7 +251,6 @@ const Dashboard = ({ user }) => {
           className="glass-panel quick-action-btn" 
           onClick={() => navigate('/history')}
         >
-          <span className="action-icon">📊</span>
           <span className="action-text">Full History</span>
         </button>
         
@@ -263,7 +258,6 @@ const Dashboard = ({ user }) => {
           className="glass-panel quick-action-btn" 
           onClick={() => fetchOverviewData()}
         >
-          <span className="action-icon">🔄</span>
           <span className="action-text">Refresh Data</span>
         </button>
       </div>
@@ -280,66 +274,74 @@ const Dashboard = ({ user }) => {
             <div className="modal-body">
               <div className="detail-section">
                 <h3>Customer Information</h3>
-                <div className="detail-row">
-                  <span>Name:</span>
-                  <strong>{selectedBooking.playerName}</strong>
+                <div className="detail-grid">
+                  <div className="detail-item">
+                    <span className="detail-label">Name:</span>
+                    <span className="detail-value">{selectedBooking.playerName}</span>
+                  </div>
+                  {selectedBooking.phoneNumber && (
+                    <div className="detail-item">
+                      <span className="detail-label">Phone:</span>
+                      <span className="detail-value">{selectedBooking.phoneNumber}</span>
+                    </div>
+                  )}
+                  {selectedBooking.email && (
+                    <div className="detail-item">
+                      <span className="detail-label">Email:</span>
+                      <span className="detail-value">{selectedBooking.email}</span>
+                    </div>
+                  )}
                 </div>
-                {selectedBooking.phoneNumber && (
-                  <div className="detail-row">
-                    <span>Phone:</span>
-                    <strong>{selectedBooking.phoneNumber}</strong>
-                  </div>
-                )}
-                {selectedBooking.email && (
-                  <div className="detail-row">
-                    <span>Email:</span>
-                    <strong>{selectedBooking.email}</strong>
-                  </div>
-                )}
               </div>
 
               <div className="detail-section">
                 <h3>Booking Information</h3>
-                <div className="detail-row">
-                  <span>Court:</span>
-                  <strong>{selectedBooking.courtType || 'Padel'} #{selectedBooking.courtNumber}</strong>
-                </div>
-                <div className="detail-row">
-                  <span>Date:</span>
-                  <strong>{new Date().toLocaleDateString()}</strong>
-                </div>
-                <div className="detail-row">
-                  <span>Time:</span>
-                  <strong>{formatTime(selectedBooking.time)}</strong>
-                </div>
-                <div className="detail-row">
-                  <span>Duration:</span>
-                  <strong>{selectedBooking.duration || 1} hour(s)</strong>
+                <div className="detail-grid">
+                  <div className="detail-item">
+                    <span className="detail-label">Court:</span>
+                    <span className="detail-value">
+                      {selectedBooking.courtType || 'Padel'} #{selectedBooking.courtNumber}
+                    </span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Date:</span>
+                    <span className="detail-value">{new Date().toLocaleDateString()}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Time:</span>
+                    <span className="detail-value">{formatTime(selectedBooking.time)}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Duration:</span>
+                    <span className="detail-value">{selectedBooking.duration || 1} hour(s)</span>
+                  </div>
                 </div>
               </div>
 
               <div className="detail-section">
                 <h3>Payment Information</h3>
-                <div className="detail-row">
-                  <span>Amount:</span>
-                  <strong className="price-large">{formatCurrency(selectedBooking.revenue)}</strong>
-                </div>
-                <div className="detail-row">
-                  <span>Status:</span>
-                  <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'confirmed'}`}>
-                    {selectedBooking.status || 'Confirmed'}
-                  </span>
-                </div>
-                <div className="detail-row">
-                  <span>Method:</span>
-                  <strong>{selectedBooking.paymentMethod || 'Online'}</strong>
+                <div className="detail-grid">
+                  <div className="detail-item">
+                    <span className="detail-label">Amount:</span>
+                    <span className="detail-value price-large">{formatCurrency(selectedBooking.revenue)}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Status:</span>
+                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'confirmed'}`}>
+                      {selectedBooking.status || 'Confirmed'}
+                    </span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Method:</span>
+                    <span className="detail-value">{selectedBooking.paymentMethod || 'Online'}</span>
+                  </div>
                 </div>
               </div>
 
               {selectedBooking.notes && (
                 <div className="detail-section">
                   <h3>Notes</h3>
-                  <p className="notes-display">{selectedBooking.notes}</p>
+                  <div className="notes-box">{selectedBooking.notes}</div>
                 </div>
               )}
 
@@ -353,10 +355,7 @@ const Dashboard = ({ user }) => {
               <button className="modal-btn secondary" onClick={() => setShowModal(false)}>
                 Close
               </button>
-              <button className="modal-btn primary" onClick={() => {
-                setShowModal(false);
-                // Navigate to edit or take action
-              }}>
+              <button className="modal-btn primary" onClick={() => setShowModal(false)}>
                 Take Action
               </button>
             </div>

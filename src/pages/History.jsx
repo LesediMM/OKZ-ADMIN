@@ -1,4 +1,3 @@
-// src/pages/History.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../styles/Dashboard.css';
@@ -18,7 +17,6 @@ const History = ({ user }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const navigate = useNavigate();
 
-  // Fetch history data
   const fetchHistory = async () => {
     try {
       setLoading(true);
@@ -56,11 +54,9 @@ const History = ({ user }) => {
     fetchHistory();
   }, []);
 
-  // Filter bookings based on search term, date range, court type, and status
   useEffect(() => {
     let filtered = [...bookings];
 
-    // Apply search filter
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(booking => 
@@ -73,7 +69,6 @@ const History = ({ user }) => {
       );
     }
 
-    // Apply date range filter
     if (dateRange.start) {
       filtered = filtered.filter(booking => 
         new Date(booking.date) >= new Date(dateRange.start)
@@ -85,14 +80,12 @@ const History = ({ user }) => {
       );
     }
 
-    // Apply court type filter
     if (courtFilter !== 'all') {
       filtered = filtered.filter(booking => 
         booking.courtType?.toLowerCase() === courtFilter.toLowerCase()
       );
     }
 
-    // Apply status filter
     if (statusFilter !== 'all') {
       filtered = filtered.filter(booking => 
         booking.status?.toLowerCase() === statusFilter.toLowerCase()
@@ -102,7 +95,6 @@ const History = ({ user }) => {
     setFilteredBookings(filtered);
   }, [searchTerm, bookings, dateRange, courtFilter, statusFilter]);
 
-  // Sort function
   const requestSort = (key) => {
     let direction = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -114,13 +106,11 @@ const History = ({ user }) => {
       let aVal = a[key];
       let bVal = b[key];
       
-      // Handle date sorting
       if (key === 'date') {
         aVal = new Date(aVal).getTime();
         bVal = new Date(bVal).getTime();
       }
       
-      // Handle revenue sorting as number
       if (key === 'revenue') {
         aVal = Number(aVal) || 0;
         bVal = Number(bVal) || 0;
@@ -134,7 +124,6 @@ const History = ({ user }) => {
     setFilteredBookings(sorted);
   };
 
-  // Format date for display
   const formatDate = (dateString) => {
     try {
       return new Date(dateString).toLocaleString('en-US', {
@@ -149,7 +138,6 @@ const History = ({ user }) => {
     }
   };
 
-  // Format currency
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-EG', {
       style: 'currency',
@@ -159,22 +147,11 @@ const History = ({ user }) => {
     }).format(amount || 0);
   };
 
-  // Get court icon
-  const getCourtIcon = (courtType) => {
-    switch(courtType?.toLowerCase()) {
-      case 'padel': return '🎾';
-      case 'tennis': return '🏸';
-      default: return '🏟️';
-    }
-  };
-
-  // Handle row click to show details
   const handleRowClick = (booking) => {
     setSelectedBooking(booking);
     setShowModal(true);
   };
 
-  // Export to CSV with more details
   const exportToCSV = () => {
     const headers = [
       'Date', 'Time', 'Customer', 'Phone', 'Email', 
@@ -210,7 +187,6 @@ const History = ({ user }) => {
     a.click();
   };
 
-  // Print report with enhanced styling
   const printReport = () => {
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
@@ -218,57 +194,43 @@ const History = ({ user }) => {
         <head>
           <title>OKZ Sports - Booking History Report</title>
           <style>
-            body { font-family: 'Inter', Arial, sans-serif; padding: 30px; background: #f5f5f5; }
+            body { font-family: 'Inter', Arial, sans-serif; padding: 30px; background: #f5f5f7; }
             .report-header { text-align: center; margin-bottom: 30px; }
-            h1 { color: #667eea; margin-bottom: 5px; }
+            h1 { color: #1d1d1f; margin-bottom: 5px; }
             .summary-cards { display: flex; gap: 20px; margin: 20px 0; }
             .summary-card { 
               background: white; 
               padding: 20px; 
-              border-radius: 12px; 
+              border-radius: 16px; 
               flex: 1;
-              box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+              box-shadow: 0 2px 8px rgba(0,0,0,0.02);
             }
-            .summary-card h3 { color: #666; font-size: 0.9rem; margin-bottom: 10px; }
-            .summary-card .value { font-size: 1.8rem; font-weight: bold; color: #333; }
+            .summary-card h3 { color: #86868b; font-size: 0.9rem; margin-bottom: 10px; }
+            .summary-card .value { font-size: 1.8rem; font-weight: bold; color: #1d1d1f; }
             table { 
               width: 100%; 
               border-collapse: collapse; 
               margin-top: 30px; 
               background: white;
-              border-radius: 12px;
+              border-radius: 16px;
               overflow: hidden;
-              box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+              box-shadow: 0 4px 12px rgba(0,0,0,0.02);
             }
             th { 
-              background: #667eea; 
+              background: #0071e3; 
               color: white; 
               padding: 12px; 
               text-align: left;
-              font-weight: 600;
+              font-weight: 500;
             }
             td { 
               padding: 12px; 
-              border-bottom: 1px solid #eee;
-            }
-            tr:last-child td { border-bottom: none; }
-            .status-paid { 
-              background: #c6f6d5; 
-              color: #22543d; 
-              padding: 4px 12px; 
-              border-radius: 20px;
-              font-weight: 500;
-            }
-            .status-pending { 
-              background: #feebc8; 
-              color: #744210; 
-              padding: 4px 12px; 
-              border-radius: 20px;
+              border-bottom: 1px solid #f5f5f7;
             }
             .footer { 
               margin-top: 30px; 
               text-align: right; 
-              color: #666;
+              color: #86868b;
               font-size: 0.9rem;
             }
           </style>
@@ -316,7 +278,7 @@ const History = ({ user }) => {
                   <td>${booking.courtType || 'Padel'} #${booking.courtNumber || '1'}</td>
                   <td>${booking.duration || 1} hour(s)</td>
                   <td><strong>${formatCurrency(booking.revenue)}</strong></td>
-                  <td><span class="status-${booking.status?.toLowerCase() || 'paid'}">${booking.status || 'Paid'}</span></td>
+                  <td><span class="status-pill ${booking.status?.toLowerCase() || 'paid'}">${booking.status || 'Paid'}</span></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -332,7 +294,6 @@ const History = ({ user }) => {
     printWindow.print();
   };
 
-  // Calculate totals
   const totalRevenue = filteredBookings.reduce((sum, b) => sum + (b.revenue || 0), 0);
   const uniquePlayers = new Set(filteredBookings.map(b => b.customerName)).size;
   const averageBookingValue = filteredBookings.length > 0 ? totalRevenue / filteredBookings.length : 0;
@@ -375,7 +336,7 @@ const History = ({ user }) => {
             className="filter-toggle"
             onClick={() => setShowFilters(!showFilters)}
           >
-            {showFilters ? 'Hide Filters 🔍' : 'Show Filters 🔍'}
+            {showFilters ? 'Hide Filters' : 'Show Filters'}
           </button>
         </div>
       </header>
@@ -466,7 +427,7 @@ const History = ({ user }) => {
         )}
       </div>
 
-      {/* Enhanced Summary Cards */}
+      {/* Summary Cards */}
       <div className="stats-grid history-stats">
         <div className="glass-panel stat-card small">
           <h3>Total Bookings</h3>
@@ -493,7 +454,7 @@ const History = ({ user }) => {
         </div>
       </div>
 
-      {/* Enhanced History Table */}
+      {/* History Table */}
       <div className="glass-panel history-table-container">
         <table className="history-table detailed">
           <thead>
@@ -537,9 +498,7 @@ const History = ({ user }) => {
                   </td>
                   <td>
                     <div className="court-details">
-                      <span className="court-type">
-                        {getCourtIcon(booking.courtType)} {booking.courtType || 'Padel'}
-                      </span>
+                      <span className="court-type">{booking.courtType || 'Padel'}</span>
                       <span className="court-number">Court #{booking.courtNumber || '1'}</span>
                     </div>
                   </td>
@@ -569,7 +528,7 @@ const History = ({ user }) => {
                         handleRowClick(booking);
                       }}
                     >
-                      👁️ View
+                      View
                     </button>
                   </td>
                 </tr>
@@ -578,7 +537,6 @@ const History = ({ user }) => {
               <tr>
                 <td colSpan="8" className="no-results">
                   <div className="empty-state">
-                    <div className="empty-icon">📊</div>
                     <p>
                       {searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all'
                         ? 'No bookings match your filters' 
@@ -616,20 +574,20 @@ const History = ({ user }) => {
             onClick={exportToCSV}
             disabled={filteredBookings.length === 0}
           >
-            📥 Export as CSV
+            Export as CSV
           </button>
           <button 
             className="glass-panel export-btn" 
             onClick={printReport}
             disabled={filteredBookings.length === 0}
           >
-            🖨️ Print Report
+            Print Report
           </button>
           <button 
             className="glass-panel export-btn" 
             onClick={fetchHistory}
           >
-            🔄 Refresh Data
+            Refresh Data
           </button>
         </div>
       </div>
@@ -645,7 +603,7 @@ const History = ({ user }) => {
             
             <div className="modal-body">
               <div className="detail-section">
-                <h3>📋 Booking Information</h3>
+                <h3>Booking Information</h3>
                 <div className="detail-grid">
                   <div className="detail-item">
                     <span className="detail-label">Booking ID:</span>
@@ -669,7 +627,7 @@ const History = ({ user }) => {
               </div>
 
               <div className="detail-section">
-                <h3>👤 Customer Information</h3>
+                <h3>Customer Information</h3>
                 <div className="detail-grid">
                   <div className="detail-item">
                     <span className="detail-label">Name:</span>
@@ -687,7 +645,7 @@ const History = ({ user }) => {
               </div>
 
               <div className="detail-section">
-                <h3>💰 Payment Information</h3>
+                <h3>Payment Information</h3>
                 <div className="detail-grid">
                   <div className="detail-item">
                     <span className="detail-label">Amount:</span>
@@ -708,7 +666,7 @@ const History = ({ user }) => {
 
               {selectedBooking.notes && (
                 <div className="detail-section">
-                  <h3>📝 Notes</h3>
+                  <h3>Notes</h3>
                   <div className="notes-box">
                     {selectedBooking.notes}
                   </div>
@@ -720,10 +678,7 @@ const History = ({ user }) => {
               <button className="modal-btn secondary" onClick={() => setShowModal(false)}>
                 Close
               </button>
-              <button className="modal-btn primary" onClick={() => {
-                // Add any action here (refund, rebook, etc.)
-                setShowModal(false);
-              }}>
+              <button className="modal-btn primary" onClick={() => setShowModal(false)}>
                 Mark as Actioned
               </button>
             </div>

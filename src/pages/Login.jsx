@@ -30,7 +30,6 @@ const Login = ({ setUser }) => {
         throw new Error(data.message || 'Login failed');
       }
 
-      // Success - save to localStorage and update state
       localStorage.setItem('adminEmail', email);
       if (data.token) {
         localStorage.setItem('adminToken', data.token);
@@ -63,6 +62,7 @@ const Login = ({ setUser }) => {
               onChange={(e) => setEmail(e.target.value)}
               required
               placeholder="Enter your email"
+              autoComplete="email"
             />
           </div>
           
@@ -75,6 +75,7 @@ const Login = ({ setUser }) => {
               onChange={(e) => setPassword(e.target.value)}
               required
               placeholder="Enter your password"
+              autoComplete="current-password"
             />
           </div>
           
