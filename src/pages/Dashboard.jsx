@@ -33,6 +33,15 @@ const Dashboard = ({ user }) => {
       }
       
       const data = await response.json();
+      
+      // Ensure each booking has a price (default to 300 if not present)
+      if (data.todaySchedule) {
+        data.todaySchedule = data.todaySchedule.map(booking => ({
+          ...booking,
+          price: booking.price || booking.revenue || 300 // Default to 300 EGP
+        }));
+      }
+      
       setOverviewData(data);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
@@ -166,8 +175,8 @@ const Dashboard = ({ user }) => {
               <div key={booking.id} className="schedule-card" onClick={() => handleViewDetails(booking)}>
                 <div className="schedule-card-header">
                   <div className="time-badge">{formatTime(booking.time)}</div>
-                  <span className={`status-pill ${booking.status?.toLowerCase() || 'confirmed'}`}>
-                    {booking.status || 'Confirmed'}
+                  <span className={`status-pill ${booking.status?.toLowerCase() || 'active'}`}>
+                    {booking.status || 'active'}
                   </span>
                 </div>
                 
@@ -193,9 +202,9 @@ const Dashboard = ({ user }) => {
                     </div>
                     
                     <div className="detail-item">
-                      <span className="detail-label">Amount</span>
+                      <span className="detail-label">Price</span>
                       <span className="detail-value price-highlight">
-                        {formatCurrency(booking.revenue)}
+                        {formatCurrency(booking.price)}
                       </span>
                     </div>
                     
@@ -320,17 +329,19 @@ const Dashboard = ({ user }) => {
                 <div className="detail-grid">
                   <div className="detail-item">
                     <span className="detail-label">Amount:</span>
-                    <span className="detail-value price-large">{formatCurrency(selectedBooking.revenue)}</span>
-                  </div>
-                  <div className="detail-item">
-                    <span className="detail-label">Status:</span>
-                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'confirmed'}`}>
-                      {selectedBooking.status || 'Confirmed'}
+                    <span className="detail-value price-large">
+                      {formatCurrency(selectedBooking.price)}
                     </span>
                   </div>
                   <div className="detail-item">
-                    <span className="detail-label">Method:</span>
+                    <span className="detail-label">Payment Method:</span>
                     <span className="detail-value">{selectedBooking.paymentMethod || 'Online'}</span>
+                  </div>
+                  <div className="detail-item">
+                    <span className="detail-label">Status:</span>
+                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'active'}`}>
+                      {selectedBooking.status || 'active'}
+                    </span>
                   </div>
                 </div>
               </div>
