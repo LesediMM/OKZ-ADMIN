@@ -7,9 +7,13 @@ import History from './pages/History';
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
-  const isAuthenticated = localStorage.getItem('adminEmail') !== null;
+  const isAuthenticated = localStorage.getItem('adminEmail') !== null && 
+                          localStorage.getItem('adminToken') !== null;
   
   if (!isAuthenticated) {
+    // Clear any partial session data
+    localStorage.removeItem('adminEmail');
+    localStorage.removeItem('adminToken');
     return <Navigate to="/login" replace />;
   }
   
@@ -18,14 +22,23 @@ const ProtectedRoute = ({ children }) => {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // Check for existing session on app load
   useEffect(() => {
     const adminEmail = localStorage.getItem('adminEmail');
-    if (adminEmail) {
+    const adminToken = localStorage.getItem('adminToken');
+    
+    if (adminEmail && adminToken) {
       setUser({ email: adminEmail });
     }
+    setLoading(false);
   }, []);
+
+  // Show nothing while checking authentication
+  if (loading) {
+    return null; // or a minimal loading spinner if you prefer
+  }
 
   return (
     <BrowserRouter>
@@ -52,6 +65,11 @@ function App() {
         />
         <Route 
           path="/" 
+          element={<Navigate to="/dashboard" replace />} 
+        />
+        {/* Catch all other routes - redirect to dashboard or login */}
+        <Route 
+          path="*" 
           element={<Navigate to="/dashboard" replace />} 
         />
       </Routes>

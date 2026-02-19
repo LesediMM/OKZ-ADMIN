@@ -2,20 +2,89 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    
+    <!-- Primary Meta Tags -->
+    <title>OKZ Admin Portal</title>
+    <meta name="title" content="OKZ Admin Portal - Court Management Dashboard" />
+    <meta name="description" content="Admin dashboard for managing OKZ Sports - Padel and Tennis court bookings, revenue tracking, and schedule management." />
+    <meta name="theme-color" content="#0071e3" />
+    
+    <!-- Apple-specific meta tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="OKZ Admin" />
+    
+    <!-- Favicon - Apple-style -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#0071e3" />
+    
+    <!-- Fallback favicon -->
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OKZ Admin - Dashboard</title>
     
-    <!-- Apple-inspired fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Apple-inspired fonts - Inter and SF Pro fallback -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet" />
     
-    <!-- Use the same favicon as user site for brand continuity -->
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- Preload critical assets -->
+    <link rel="preload" href="/src/styles/index.css" as="style" />
+    <link rel="preload" href="/src/main.jsx" as="script" />
+    
+    <!-- Open Graph / Social Media Meta Tags -->
+    <meta property="og:title" content="OKZ Admin Portal" />
+    <meta property="og:description" content="Admin dashboard for OKZ Sports court management" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+    
+    <!-- Microsoft Tiles -->
+    <meta name="msapplication-TileColor" content="#0071e3" />
+    <meta name="msapplication-config" content="/browserconfig.xml" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- Optional: Add a minimal loading indicator (hidden by JS after mount) -->
+    <div id="loading-indicator" style="
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(145deg, #f8faff 0%, #f0f5ff 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    ">
+      <div style="
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(0, 113, 227, 0.1);
+        border-top-color: #0071e3;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      "></div>
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+      </style>
+    </div>
+    
+    <script>
+      // Hide loading indicator when React mounts
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          const loader = document.getElementById('loading-indicator');
+          if (loader) {
+            loader.style.opacity = '0';
+            setTimeout(() => loader.style.display = 'none', 300);
+          }
+        }, 100);
+      });
+    </script>
   </body>
 </html>
