@@ -127,36 +127,6 @@
       window.__OKZ_ADMIN_FALLBACKS.startLoadTimer();
     </script>
     
-    <!-- FAIL SAFE: Noscript fallback -->
-    <noscript>
-      <style>
-        #root {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: linear-gradient(145deg, #f8faff 0%, #f0f5ff 100%);
-        }
-        .noscript-card {
-          background: white;
-          border-radius: 24px;
-          padding: 40px;
-          max-width: 400px;
-          text-align: center;
-          box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-        }
-      </style>
-      <div id="root">
-        <div class="noscript-card">
-          <div style="font-size: 4rem; margin-bottom: 1rem;">⚡</div>
-          <h1 style="color: #1a2b56; margin-bottom: 1rem;">JavaScript Required</h1>
-          <p style="color: #666; margin-bottom: 2rem;">
-            Please enable JavaScript to use OKZ Admin Portal.
-          </p>
-        </div>
-      </div>
-    </noscript>
-    
     <!-- Primary Meta Tags -->
     <title>OKZ Admin Portal</title>
     <meta name="title" content="OKZ Admin Portal - Court Management Dashboard" />
@@ -225,6 +195,36 @@
         @keyframes spin { to { transform: rotate(360deg); } }
       </style>
     </div>
+
+    <!-- FAIL SAFE: Noscript fallback - MOVED TO BODY WHERE IT BELONGS -->
+    <noscript>
+      <style>
+        #root {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: linear-gradient(145deg, #f8faff 0%, #f0f5ff 100%);
+        }
+        .noscript-card {
+          background: white;
+          border-radius: 24px;
+          padding: 40px;
+          max-width: 400px;
+          text-align: center;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+      </style>
+      <div id="root">
+        <div class="noscript-card">
+          <div style="font-size: 4rem; margin-bottom: 1rem;">⚡</div>
+          <h1 style="color: #1a2b56; margin-bottom: 1rem;">JavaScript Required</h1>
+          <p style="color: #666; margin-bottom: 2rem;">
+            Please enable JavaScript to use OKZ Admin Portal.
+          </p>
+        </div>
+      </div>
+    </noscript>
 
     <!-- FAIL HARD: Script loading with error handling -->
     <script type="module" src="/src/main.jsx" 
