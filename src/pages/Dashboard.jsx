@@ -8,44 +8,178 @@ const Dashboard = ({ user }) => {
   const [error, setError] = useState('');
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [activeView, setActiveView] = useState('today'); // 'today', 'upcoming', 'past'
+  const [cachedData, setCachedData] = useState(null);
+  
   const navigate = useNavigate();
 
-  const fetchOverviewData = async () => {
+  // ===== FALLBACKS - Isolated inline =====
+  const DashboardFallbacks = {
+    // Cache management
+    cache: {
+      save: (key, data) => {
+        try {
+          localStorage.setItem(`dashboard_${key}`, JSON.stringify({
+            data,
+            timestamp: Date.now()
+          }));
+        } catch (e) {}
+      },
+      
+      load: (key, maxAge = 300000) => { // 5 minutes default
+        try {
+          const cached = localStorage.getItem(`dashboard_${key}`);
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < maxAge) {
+              return data;
+            }
+          }
+        } catch (e) {}
+        return null;
+      }
+    },
+
+    // Separate bookings into categories
+    categorizeBookings: (schedule) => {
+      if (!schedule || !Array.isArray(schedule)) {
+        return { today: [], upcoming: [], past: [] };
+      }
+
+      const now = new Date();
+      const today = new Date(now.setHours(0, 0, 0, 0));
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endOfToday = new Date(today);
+      endOfToday.setHours(23, 59, 59, 999);
+
+      return {
+        today: schedule.filter(b => {
+          const bookingDate = new Date(b.date || b.time);
+          return bookingDate >= today && bookingDate <= endOfToday;
+        }),
+        upcoming: schedule.filter(b => {
+          const bookingDate = new Date(b.date || b.time);
+          return bookingDate > endOfToday;
+        }),
+        past: schedule.filter(b => {
+          const bookingDate = new Date(b.date || b.time);
+          return bookingDate < today;
+        })
+      };
+    },
+
+    // Calculate revenue (cancelled bookings = 0)
+    calculateRevenue: (bookings) => {
+      return bookings.reduce((sum, b) => {
+        if (b.status?.toLowerCase() === 'cancelled') return sum;
+        return sum + (b.price || b.revenue || 0);
+      }, 0);
+    },
+
+    // Simplify payment status
+    simplifyPayment: (booking) => {
+      return {
+        ...booking,
+        paymentStatus: booking.status?.toLowerCase() === 'cancelled' ? 'refunded' : 'paid',
+        displayStatus: booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'
+      };
+    },
+
+    // Retry with backoff
+    async retry(fn, maxRetries = 2) {
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (i === maxRetries - 1) throw err;
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+        }
+      }
+    },
+
+    // Network status
+    network: {
+      isOnline: navigator.onLine,
+      init() {
+        window.addEventListener('online', () => { this.isOnline = true; });
+        window.addEventListener('offline', () => { this.isOnline = false; });
+      }
+    }
+  };
+
+  // Initialize
+  DashboardFallbacks.network.init();
+  // ===== END FALLBACKS =====
+
+  const fetchOverviewData = async (retry = true) => {
     try {
       setLoading(true);
       setError('');
       
-      const response = await fetch('https://okz.onrender.com/api/v1/admin/overview', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
-          'Content-Type': 'application/json'
+      // Try cache first if offline
+      if (!DashboardFallbacks.network.isOnline) {
+        const cached = DashboardFallbacks.cache.load('overview', 3600000); // 1 hour for offline
+        if (cached) {
+          setOverviewData(cached);
+          setCachedData(cached);
+          setLoading(false);
+          return;
         }
-      });
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          localStorage.removeItem('adminEmail');
-          localStorage.removeItem('adminToken');
-          navigate('/login');
-          throw new Error('Session expired. Please login again.');
-        }
-        throw new Error(`Failed to fetch dashboard data (${response.status})`);
       }
+
+      const fetchFn = async () => {
+        const response = await fetch('https://okz.onrender.com/api/v1/admin/overview', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            localStorage.removeItem('adminEmail');
+            localStorage.removeItem('adminToken');
+            navigate('/login');
+            throw new Error('Session expired. Please login again.');
+          }
+          throw new Error(`Failed to fetch dashboard data (${response.status})`);
+        }
+        
+        return await response.json();
+      };
+
+      const data = retry 
+        ? await DashboardFallbacks.retry(fetchFn)
+        : await fetchFn();
       
-      const data = await response.json();
-      
-      // Ensure each booking has a price (default to 300 if not present)
+      // Ensure each booking has a price (default based on court type)
       if (data.todaySchedule) {
         data.todaySchedule = data.todaySchedule.map(booking => ({
           ...booking,
-          price: booking.price || booking.revenue || 300 // Default to 300 EGP
+          price: booking.price || booking.revenue || (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150),
+          displayStatus: booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'
         }));
       }
       
       setOverviewData(data);
+      setCachedData(data);
+      
+      // Save to cache
+      DashboardFallbacks.cache.save('overview', data);
+      
     } catch (err) {
       console.error('Dashboard fetch error:', err);
-      setError(err.message);
+      
+      // Try cache as fallback
+      const cached = DashboardFallbacks.cache.load('overview', 86400000); // 24 hours for error fallback
+      if (cached) {
+        setOverviewData(cached);
+        setCachedData(cached);
+        setError('Using cached data - ' + err.message);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -56,7 +190,7 @@ const Dashboard = ({ user }) => {
   }, []);
 
   const handleRetry = () => {
-    fetchOverviewData();
+    fetchOverviewData(true);
   };
 
   const handleViewDetails = (booking) => {
@@ -85,7 +219,51 @@ const Dashboard = ({ user }) => {
     }
   };
 
-  if (loading) {
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
+  // Categorize bookings
+  const categorized = DashboardFallbacks.categorizeBookings(overviewData?.todaySchedule);
+  
+  // Calculate revenue based on active view
+  const getDisplayRevenue = () => {
+    switch(activeView) {
+      case 'today':
+        return DashboardFallbacks.calculateRevenue(categorized.today);
+      case 'upcoming':
+        return DashboardFallbacks.calculateRevenue(categorized.upcoming);
+      case 'past':
+        return DashboardFallbacks.calculateRevenue(categorized.past);
+      default:
+        return overviewData?.dailyRevenue || 0;
+    }
+  };
+
+  // Get current display bookings
+  const getDisplayBookings = () => {
+    switch(activeView) {
+      case 'today':
+        return categorized.today;
+      case 'upcoming':
+        return categorized.upcoming;
+      case 'past':
+        return categorized.past;
+      default:
+        return overviewData?.todaySchedule || [];
+    }
+  };
+
+  if (loading && !cachedData) {
     return (
       <div className="dashboard-container apple-fade-in">
         <div className="loading-screen">
@@ -96,7 +274,7 @@ const Dashboard = ({ user }) => {
     );
   }
   
-  if (error) {
+  if (error && !cachedData) {
     return (
       <div className="dashboard-container apple-fade-in">
         <div className="error-container">
@@ -112,8 +290,30 @@ const Dashboard = ({ user }) => {
     );
   }
 
+  const displayBookings = getDisplayBookings();
+  const displayRevenue = getDisplayRevenue();
+
   return (
     <div className="dashboard-container apple-fade-in">
+      {/* Offline/Cache indicator */}
+      {!DashboardFallbacks.network.isOnline && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#ffc107',
+          color: '#000',
+          padding: '8px 16px',
+          borderRadius: '30px',
+          fontSize: '0.85rem',
+          zIndex: 1000,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+        }}>
+          📱 Offline mode - Showing cached data
+        </div>
+      )}
+
       <header>
         <div className="header-left">
           <h1>Welcome back, {user?.email?.split('@')[0] || 'Admin'}</h1>
@@ -127,26 +327,89 @@ const Dashboard = ({ user }) => {
           </span>
         </div>
         <button onClick={() => navigate('/history')} className="quick-action">
-          View History →
+          View Full History →
         </button>
       </header>
+
+      {/* View Tabs */}
+      <div className="view-tabs" style={{
+        display: 'flex',
+        gap: '10px',
+        marginBottom: '20px',
+        borderBottom: '1px solid rgba(0,0,0,0.1)',
+        paddingBottom: '10px'
+      }}>
+        <button
+          onClick={() => setActiveView('today')}
+          className={`view-tab ${activeView === 'today' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'today' ? '#0071e3' : 'transparent',
+            color: activeView === 'today' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'today' ? '600' : '400'
+          }}
+        >
+          Today ({categorized.today.length})
+        </button>
+        <button
+          onClick={() => setActiveView('upcoming')}
+          className={`view-tab ${activeView === 'upcoming' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'upcoming' ? '#0071e3' : 'transparent',
+            color: activeView === 'upcoming' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'upcoming' ? '600' : '400'
+          }}
+        >
+          Upcoming ({categorized.upcoming.length})
+        </button>
+        <button
+          onClick={() => setActiveView('past')}
+          className={`view-tab ${activeView === 'past' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'past' ? '#0071e3' : 'transparent',
+            color: activeView === 'past' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'past' ? '600' : '400'
+          }}
+        >
+          Past ({categorized.past.length})
+        </button>
+      </div>
 
       {/* Stats Grid */}
       <div className="stats-grid">
         <div className="glass-panel stat-card">
-          <h3>Daily Revenue</h3>
+          <h3>{activeView === 'today' ? "Today's" : activeView === 'upcoming' ? 'Upcoming' : 'Past'} Revenue</h3>
           <p className="stat-value">
-            {formatCurrency(overviewData?.dailyRevenue)}
+            {formatCurrency(displayRevenue)}
           </p>
-          <span className="stat-label">Today's earnings</span>
+          <span className="stat-label">
+            {activeView === 'today' ? "Today's earnings" : 
+             activeView === 'upcoming' ? 'Future bookings' : 
+             'Completed bookings'}
+          </span>
         </div>
         
         <div className="glass-panel stat-card">
-          <h3>Daily Utilization</h3>
+          <h3>{activeView === 'today' ? 'Daily' : activeView === 'upcoming' ? 'Upcoming' : 'Past'} Utilization</h3>
           <p className="stat-value">
-            {overviewData?.dailyUtilization || 0} <span className="stat-unit">slots</span>
+            {displayBookings.length} <span className="stat-unit">bookings</span>
           </p>
-          <span className="stat-label">Occupied today</span>
+          <span className="stat-label">
+            {activeView === 'today' ? 'Occupied today' : 
+             activeView === 'upcoming' ? 'Scheduled' : 
+             'Completed'}
+          </span>
         </div>
         
         <div className="glass-panel stat-card">
@@ -161,22 +424,36 @@ const Dashboard = ({ user }) => {
       {/* Live Schedule */}
       <div className="glass-panel live-schedule">
         <div className="schedule-header">
-          <h2>Today's Schedule</h2>
+          <h2>
+            {activeView === 'today' ? "Today's Schedule" : 
+             activeView === 'upcoming' ? 'Upcoming Bookings' : 
+             'Past Bookings'}
+          </h2>
           <div className="schedule-controls">
             <span className="schedule-count">
-              {overviewData?.todaySchedule?.length || 0} bookings
+              {displayBookings.length} bookings
             </span>
           </div>
         </div>
         
         <div className="schedule-list detailed">
-          {overviewData?.todaySchedule?.length > 0 ? (
-            overviewData.todaySchedule.map((booking) => (
-              <div key={booking.id} className="schedule-card" onClick={() => handleViewDetails(booking)}>
+          {displayBookings.length > 0 ? (
+            displayBookings.map((booking) => (
+              <div 
+                key={booking.id} 
+                className={`schedule-card ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled-card' : ''}`}
+                onClick={() => handleViewDetails(booking)}
+                style={{
+                  opacity: booking.status?.toLowerCase() === 'cancelled' ? 0.7 : 1,
+                  textDecoration: booking.status?.toLowerCase() === 'cancelled' ? 'line-through' : 'none'
+                }}
+              >
                 <div className="schedule-card-header">
-                  <div className="time-badge">{formatTime(booking.time)}</div>
-                  <span className={`status-pill ${booking.status?.toLowerCase() || 'active'}`}>
-                    {booking.status || 'active'}
+                  <div className="time-badge">
+                    {activeView === 'past' ? formatDate(booking.date) : formatTime(booking.time)}
+                  </div>
+                  <span className={`status-pill ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'}`}>
+                    {booking.status === 'cancelled' ? 'Cancelled' : 'Paid'}
                   </span>
                 </div>
                 
@@ -202,7 +479,7 @@ const Dashboard = ({ user }) => {
                     </div>
                     
                     <div className="detail-item">
-                      <span className="detail-label">Price</span>
+                      <span className="detail-label">Amount</span>
                       <span className="detail-value price-highlight">
                         {formatCurrency(booking.price)}
                       </span>
@@ -234,8 +511,12 @@ const Dashboard = ({ user }) => {
             ))
           ) : (
             <div className="empty-state">
-              <p>No bookings scheduled for today</p>
-              <span className="empty-subtext">Check back later or view history</span>
+              <p>No {activeView} bookings found</p>
+              <span className="empty-subtext">
+                {activeView === 'today' ? 'Check back later' : 
+                 activeView === 'upcoming' ? 'No future bookings scheduled' : 
+                 'No past bookings available'}
+              </span>
             </div>
           )}
         </div>
@@ -246,11 +527,11 @@ const Dashboard = ({ user }) => {
         <button 
           className="glass-panel quick-action-btn" 
           onClick={() => {
-            navigator.clipboard.writeText(JSON.stringify(overviewData?.todaySchedule, null, 2));
-            alert('Schedule copied to clipboard!');
+            navigator.clipboard.writeText(JSON.stringify(displayBookings, null, 2));
+            alert(`${activeView} schedule copied to clipboard!`);
           }}
         >
-          <span className="action-text">Copy Schedule</span>
+          <span className="action-text">Copy {activeView} Schedule</span>
         </button>
         
         <button 
@@ -311,7 +592,9 @@ const Dashboard = ({ user }) => {
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Date:</span>
-                    <span className="detail-value">{new Date().toLocaleDateString()}</span>
+                    <span className="detail-value">
+                      {formatDate(selectedBooking.date) || new Date().toLocaleDateString()}
+                    </span>
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Time:</span>
@@ -339,11 +622,23 @@ const Dashboard = ({ user }) => {
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Status:</span>
-                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'active'}`}>
-                      {selectedBooking.status || 'active'}
+                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'}`}>
+                      {selectedBooking.status === 'cancelled' ? 'Cancelled' : 'Paid'}
                     </span>
                   </div>
                 </div>
+                {selectedBooking.status === 'cancelled' && (
+                  <div style={{
+                    marginTop: '10px',
+                    padding: '8px',
+                    background: 'rgba(220,53,69,0.1)',
+                    borderRadius: '6px',
+                    color: '#dc3545',
+                    fontSize: '0.85rem'
+                  }}>
+                    ⚠️ This booking was cancelled - amount not included in revenue
+                  </div>
+                )}
               </div>
 
               {selectedBooking.notes && (

@@ -15,13 +15,98 @@ const History = ({ user }) => {
   const [showModal, setShowModal] = useState(false);
   const [courtFilter, setCourtFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  
+  // NEW: View tabs
+  const [activeView, setActiveView] = useState('today'); // 'today', 'upcoming', 'past', 'all'
+  
   const navigate = useNavigate();
+
+  // ===== FALLBACKS - Isolated inline =====
+  const HistoryFallbacks = {
+    // Date categorization
+    categorizeBookings: (bookings) => {
+      const now = new Date();
+      const today = new Date(now.setHours(0, 0, 0, 0));
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const endOfToday = new Date(today);
+      endOfToday.setHours(23, 59, 59, 999);
+      
+      return {
+        today: bookings.filter(b => {
+          const bookingDate = new Date(b.date);
+          return bookingDate >= today && bookingDate <= endOfToday;
+        }),
+        upcoming: bookings.filter(b => {
+          const bookingDate = new Date(b.date);
+          return bookingDate > endOfToday;
+        }),
+        past: bookings.filter(b => {
+          const bookingDate = new Date(b.date);
+          return bookingDate < today;
+        })
+      };
+    },
+    
+    // Simple revenue calculation (all bookings considered paid)
+    calculateRevenue: (bookings) => {
+      return bookings.reduce((sum, b) => {
+        // Use price or revenue field, default to 400 for padel, 150 for tennis
+        const amount = b.price || b.revenue || (b.courtType?.toLowerCase() === 'padel' ? 400 : 150);
+        return sum + (b.status?.toLowerCase() === 'cancelled' ? 0 : amount);
+      }, 0);
+    },
+    
+    // Cache for offline support
+    cache: {
+      save: (key, data) => {
+        try {
+          localStorage.setItem(`history_${key}`, JSON.stringify({
+            data,
+            timestamp: Date.now()
+          }));
+        } catch (e) {}
+      },
+      
+      load: (key, maxAge = 300000) => { // 5 minutes default
+        try {
+          const cached = localStorage.getItem(`history_${key}`);
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < maxAge) {
+              return data;
+            }
+          }
+        } catch (e) {}
+        return null;
+      }
+    },
+    
+    // Payment simplification - all bookings are considered paid unless cancelled
+    simplifyPayment: (booking) => {
+      return {
+        ...booking,
+        paymentStatus: booking.status?.toLowerCase() === 'cancelled' ? 'refunded' : 'paid',
+        revenue: booking.price || booking.revenue || (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150)
+      };
+    }
+  };
+  // ===== END FALLBACKS =====
 
   const fetchHistory = async () => {
     try {
       setLoading(true);
       setError('');
       
+      // Try cache first
+      const cached = HistoryFallbacks.cache.load('all');
+      if (cached) {
+        setBookings(cached.map(HistoryFallbacks.simplifyPayment));
+        setFilteredBookings(cached.map(HistoryFallbacks.simplifyPayment));
+        setLoading(false);
+        // Still fetch in background
+      }
+
       const response = await fetch('https://okz.onrender.com/api/v1/admin/history', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
@@ -40,13 +125,49 @@ const History = ({ user }) => {
       }
       
       const data = await response.json();
-      setBookings(data);
-      setFilteredBookings(data);
+      
+      // Simplify payment data - all bookings considered paid unless cancelled
+      const simplifiedData = data.map(HistoryFallbacks.simplifyPayment);
+      
+      setBookings(simplifiedData);
+      
+      // Apply current view filter
+      applyViewFilter(simplifiedData, activeView);
+      
+      // Save to cache
+      HistoryFallbacks.cache.save('all', simplifiedData);
+      
     } catch (err) {
       console.error('History fetch error:', err);
       setError(err.message);
+      
+      // If we have cached data, use it
+      const cached = HistoryFallbacks.cache.load('all', 86400000); // 24 hours for error fallback
+      if (cached) {
+        setBookings(cached.map(HistoryFallbacks.simplifyPayment));
+        applyViewFilter(cached.map(HistoryFallbacks.simplifyPayment), activeView);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Apply view filter (today, upcoming, past, all)
+  const applyViewFilter = (bookingsToFilter, view) => {
+    const categorized = HistoryFallbacks.categorizeBookings(bookingsToFilter);
+    
+    switch(view) {
+      case 'today':
+        setFilteredBookings(categorized.today);
+        break;
+      case 'upcoming':
+        setFilteredBookings(categorized.upcoming);
+        break;
+      case 'past':
+        setFilteredBookings(categorized.past);
+        break;
+      default:
+        setFilteredBookings(bookingsToFilter);
     }
   };
 
@@ -54,9 +175,35 @@ const History = ({ user }) => {
     fetchHistory();
   }, []);
 
+  // Apply view filter when activeView changes
+  useEffect(() => {
+    if (bookings.length > 0) {
+      applyViewFilter(bookings, activeView);
+    }
+  }, [activeView, bookings]);
+
+  // Apply search and other filters
   useEffect(() => {
     let filtered = [...bookings];
 
+    // First apply view filter
+    const categorized = HistoryFallbacks.categorizeBookings(filtered);
+    switch(activeView) {
+      case 'today':
+        filtered = categorized.today;
+        break;
+      case 'upcoming':
+        filtered = categorized.upcoming;
+        break;
+      case 'past':
+        filtered = categorized.past;
+        break;
+      default:
+        // all - keep as is
+        break;
+    }
+
+    // Then apply search
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(booking => 
@@ -69,6 +216,7 @@ const History = ({ user }) => {
       );
     }
 
+    // Date range filters
     if (dateRange.start) {
       filtered = filtered.filter(booking => 
         new Date(booking.date) >= new Date(dateRange.start)
@@ -80,12 +228,14 @@ const History = ({ user }) => {
       );
     }
 
+    // Court type filter
     if (courtFilter !== 'all') {
       filtered = filtered.filter(booking => 
         booking.courtType?.toLowerCase() === courtFilter.toLowerCase()
       );
     }
 
+    // Status filter (simplified - only cancelled matters)
     if (statusFilter !== 'all') {
       filtered = filtered.filter(booking => 
         booking.status?.toLowerCase() === statusFilter.toLowerCase()
@@ -93,7 +243,7 @@ const History = ({ user }) => {
     }
 
     setFilteredBookings(filtered);
-  }, [searchTerm, bookings, dateRange, courtFilter, statusFilter]);
+  }, [searchTerm, bookings, dateRange, courtFilter, statusFilter, activeView]);
 
   const requestSort = (key) => {
     let direction = 'asc';
@@ -111,7 +261,7 @@ const History = ({ user }) => {
         bVal = new Date(bVal).getTime();
       }
       
-      if (key === 'revenue') {
+      if (key === 'revenue' || key === 'price') {
         aVal = Number(aVal) || 0;
         bVal = Number(bVal) || 0;
       }
@@ -152,11 +302,21 @@ const History = ({ user }) => {
     setShowModal(true);
   };
 
-  const totalRevenue = filteredBookings.reduce((sum, b) => sum + (b.revenue || 0), 0);
+  // Calculate revenue - cancelled bookings don't count
+  const totalRevenue = filteredBookings.reduce((sum, b) => {
+    if (b.status?.toLowerCase() === 'cancelled') return sum;
+    return sum + (b.price || b.revenue || (b.courtType?.toLowerCase() === 'padel' ? 400 : 150));
+  }, 0);
+  
   const uniquePlayers = new Set(filteredBookings.map(b => b.customerName)).size;
-  const averageBookingValue = filteredBookings.length > 0 ? totalRevenue / filteredBookings.length : 0;
+  const averageBookingValue = filteredBookings.length > 0 
+    ? totalRevenue / filteredBookings.filter(b => b.status?.toLowerCase() !== 'cancelled').length 
+    : 0;
 
-  if (loading) {
+  // Get counts for each category
+  const categorized = HistoryFallbacks.categorizeBookings(bookings);
+
+  if (loading && !bookings.length) {
     return (
       <div className="dashboard-container apple-fade-in">
         <div className="loading-screen">
@@ -167,7 +327,7 @@ const History = ({ user }) => {
     );
   }
 
-  if (error) {
+  if (error && !bookings.length) {
     return (
       <div className="dashboard-container apple-fade-in">
         <div className="error-container">
@@ -198,6 +358,77 @@ const History = ({ user }) => {
           </button>
         </div>
       </header>
+
+      {/* NEW: View Tabs */}
+      <div className="view-tabs" style={{
+        display: 'flex',
+        gap: '10px',
+        marginBottom: '20px',
+        borderBottom: '1px solid rgba(0,0,0,0.1)',
+        paddingBottom: '10px'
+      }}>
+        <button
+          onClick={() => setActiveView('today')}
+          className={`view-tab ${activeView === 'today' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'today' ? '#0071e3' : 'transparent',
+            color: activeView === 'today' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'today' ? '600' : '400',
+            position: 'relative'
+          }}
+        >
+          Today ({categorized.today.length})
+        </button>
+        <button
+          onClick={() => setActiveView('upcoming')}
+          className={`view-tab ${activeView === 'upcoming' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'upcoming' ? '#0071e3' : 'transparent',
+            color: activeView === 'upcoming' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'upcoming' ? '600' : '400'
+          }}
+        >
+          Upcoming ({categorized.upcoming.length})
+        </button>
+        <button
+          onClick={() => setActiveView('past')}
+          className={`view-tab ${activeView === 'past' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'past' ? '#0071e3' : 'transparent',
+            color: activeView === 'past' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'past' ? '600' : '400'
+          }}
+        >
+          Past ({categorized.past.length})
+        </button>
+        <button
+          onClick={() => setActiveView('all')}
+          className={`view-tab ${activeView === 'all' ? 'active' : ''}`}
+          style={{
+            padding: '8px 16px',
+            borderRadius: '20px',
+            border: 'none',
+            background: activeView === 'all' ? '#0071e3' : 'transparent',
+            color: activeView === 'all' ? 'white' : '#666',
+            cursor: 'pointer',
+            fontWeight: activeView === 'all' ? '600' : '400'
+          }}
+        >
+          All Time ({bookings.length})
+        </button>
+      </div>
 
       {/* Search and Filters */}
       <div className="filters-section">
@@ -263,8 +494,6 @@ const History = ({ user }) => {
                 >
                   <option value="all">All Status</option>
                   <option value="paid">Paid</option>
-                  <option value="pending">Pending</option>
-                  <option value="confirmed">Confirmed</option>
                   <option value="cancelled">Cancelled</option>
                 </select>
               </div>
@@ -291,14 +520,13 @@ const History = ({ user }) => {
           <h3>Total Bookings</h3>
           <p className="stat-value">{filteredBookings.length}</p>
           <span className="stat-label">
-            {filteredBookings.length !== bookings.length && 
-              `filtered from ${bookings.length}`}
+            {activeView !== 'all' && `${activeView} view`}
           </span>
         </div>
         <div className="glass-panel stat-card small">
           <h3>Total Revenue</h3>
           <p className="stat-value">{formatCurrency(totalRevenue)}</p>
-          <span className="stat-label">All time</span>
+          <span className="stat-label">All bookings paid</span>
         </div>
         <div className="glass-panel stat-card small">
           <h3>Unique Players</h3>
@@ -308,7 +536,7 @@ const History = ({ user }) => {
         <div className="glass-panel stat-card small">
           <h3>Avg. Booking</h3>
           <p className="stat-value">{formatCurrency(averageBookingValue)}</p>
-          <span className="stat-label">Per booking</span>
+          <span className="stat-label">Per paid booking</span>
         </div>
       </div>
 
@@ -325,8 +553,8 @@ const History = ({ user }) => {
               </th>
               <th>Court Details</th>
               <th>Duration</th>
-              <th onClick={() => requestSort('revenue')} className="sortable">
-                Revenue {sortConfig.key === 'revenue' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+              <th onClick={() => requestSort('price')} className="sortable">
+                Amount {sortConfig.key === 'price' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
               </th>
               <th>Payment</th>
               <th>Status</th>
@@ -337,8 +565,12 @@ const History = ({ user }) => {
               filteredBookings.map((booking) => (
                 <tr 
                   key={booking.id} 
-                  className="booking-row clickable"
+                  className={`booking-row clickable ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled-row' : ''}`}
                   onClick={() => handleRowClick(booking)}
+                  style={{
+                    opacity: booking.status?.toLowerCase() === 'cancelled' ? 0.7 : 1,
+                    textDecoration: booking.status?.toLowerCase() === 'cancelled' ? 'line-through' : 'none'
+                  }}
                 >
                   <td>
                     <div className="date-time">
@@ -365,7 +597,9 @@ const History = ({ user }) => {
                     </span>
                   </td>
                   <td>
-                    <span className="revenue-amount">{formatCurrency(booking.revenue)}</span>
+                    <span className="revenue-amount">
+                      {formatCurrency(booking.price || booking.revenue || (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150))}
+                    </span>
                   </td>
                   <td>
                     <span className="payment-method">
@@ -373,8 +607,8 @@ const History = ({ user }) => {
                     </span>
                   </td>
                   <td>
-                    <span className={`status-pill ${booking.status?.toLowerCase() || 'paid'}`}>
-                      {booking.status || 'Paid'}
+                    <span className={`status-pill ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'}`}>
+                      {booking.status === 'cancelled' ? 'Cancelled' : 'Paid'}
                     </span>
                   </td>
                 </tr>
@@ -386,7 +620,7 @@ const History = ({ user }) => {
                     <p>
                       {searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all'
                         ? 'No bookings match your filters' 
-                        : 'No booking history available'}
+                        : `No ${activeView !== 'all' ? activeView : ''} bookings available`}
                     </p>
                     {(searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all') && (
                       <button 
@@ -466,7 +700,10 @@ const History = ({ user }) => {
                 <div className="detail-grid">
                   <div className="detail-item">
                     <span className="detail-label">Amount:</span>
-                    <span className="detail-value price-large">{formatCurrency(selectedBooking.revenue)}</span>
+                    <span className="detail-value price-large">
+                      {formatCurrency(selectedBooking.price || selectedBooking.revenue || 
+                        (selectedBooking.courtType?.toLowerCase() === 'padel' ? 400 : 150))}
+                    </span>
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Payment Method:</span>
@@ -474,11 +711,23 @@ const History = ({ user }) => {
                   </div>
                   <div className="detail-item">
                     <span className="detail-label">Status:</span>
-                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() || 'paid'}`}>
-                      {selectedBooking.status || 'Paid'}
+                    <span className={`status-pill ${selectedBooking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'}`}>
+                      {selectedBooking.status === 'cancelled' ? 'Cancelled' : 'Paid'}
                     </span>
                   </div>
                 </div>
+                {selectedBooking.status === 'cancelled' && (
+                  <div style={{
+                    marginTop: '10px',
+                    padding: '8px',
+                    background: 'rgba(220,53,69,0.1)',
+                    borderRadius: '6px',
+                    color: '#dc3545',
+                    fontSize: '0.85rem'
+                  }}>
+                    ⚠️ This booking was cancelled - amount not included in revenue
+                  </div>
+                )}
               </div>
 
               {selectedBooking.notes && (
