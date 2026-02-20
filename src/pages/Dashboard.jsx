@@ -26,7 +26,7 @@ const Dashboard = ({ user }) => {
         } catch (e) {}
       },
       
-      load: (key, maxAge = 300000) => { // 5 minutes default
+      load: (key, maxAge = 300000) => {
         try {
           const cached = localStorage.getItem(`dashboard_${key}`);
           if (cached) {
@@ -40,29 +40,42 @@ const Dashboard = ({ user }) => {
       }
     },
 
-    // Separate bookings into categories
-    categorizeBookings: (schedule) => {
-      if (!schedule || !Array.isArray(schedule)) {
+    // FIXED: Properly extract and categorize bookings from overview data
+    extractBookings: (data) => {
+      if (!data) return [];
+      
+      // The overview endpoint returns todaySchedule array
+      if (data.todaySchedule && Array.isArray(data.todaySchedule)) {
+        return data.todaySchedule;
+      }
+      
+      // Fallback if structure is different
+      if (Array.isArray(data)) return data;
+      
+      return [];
+    },
+
+    // FIXED: Categorize bookings by date
+    categorizeBookings: (bookings) => {
+      if (!bookings || !Array.isArray(bookings)) {
         return { today: [], upcoming: [], past: [] };
       }
 
       const now = new Date();
       const today = new Date(now.setHours(0, 0, 0, 0));
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
       const endOfToday = new Date(today);
       endOfToday.setHours(23, 59, 59, 999);
 
       return {
-        today: schedule.filter(b => {
+        today: bookings.filter(b => {
           const bookingDate = new Date(b.date || b.time);
           return bookingDate >= today && bookingDate <= endOfToday;
         }),
-        upcoming: schedule.filter(b => {
+        upcoming: bookings.filter(b => {
           const bookingDate = new Date(b.date || b.time);
           return bookingDate > endOfToday;
         }),
-        past: schedule.filter(b => {
+        past: bookings.filter(b => {
           const bookingDate = new Date(b.date || b.time);
           return bookingDate < today;
         })
@@ -75,15 +88,6 @@ const Dashboard = ({ user }) => {
         if (b.status?.toLowerCase() === 'cancelled') return sum;
         return sum + (b.price || b.revenue || 0);
       }, 0);
-    },
-
-    // Simplify payment status
-    simplifyPayment: (booking) => {
-      return {
-        ...booking,
-        paymentStatus: booking.status?.toLowerCase() === 'cancelled' ? 'refunded' : 'paid',
-        displayStatus: booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'
-      };
     },
 
     // Retry with backoff
@@ -119,7 +123,7 @@ const Dashboard = ({ user }) => {
       
       // Try cache first if offline
       if (!DashboardFallbacks.network.isOnline) {
-        const cached = DashboardFallbacks.cache.load('overview', 3600000); // 1 hour for offline
+        const cached = DashboardFallbacks.cache.load('overview', 3600000);
         if (cached) {
           setOverviewData(cached);
           setCachedData(cached);
@@ -153,11 +157,18 @@ const Dashboard = ({ user }) => {
         ? await DashboardFallbacks.retry(fetchFn)
         : await fetchFn();
       
-      // Ensure each booking has a price (default based on court type)
+      // FIXED: Ensure each booking has proper fields
       if (data.todaySchedule) {
         data.todaySchedule = data.todaySchedule.map(booking => ({
           ...booking,
-          price: booking.price || booking.revenue || (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150),
+          // Ensure price exists
+          price: booking.price || booking.revenue || 
+                 (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150),
+          // Ensure date exists (use booking.date or fallback to current)
+          date: booking.date || booking.time || new Date().toISOString(),
+          // Ensure ID exists
+          id: booking.id || booking._id || `temp-${Date.now()}`,
+          // Simplify status
           displayStatus: booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'
         }));
       }
@@ -172,7 +183,7 @@ const Dashboard = ({ user }) => {
       console.error('Dashboard fetch error:', err);
       
       // Try cache as fallback
-      const cached = DashboardFallbacks.cache.load('overview', 86400000); // 24 hours for error fallback
+      const cached = DashboardFallbacks.cache.load('overview', 86400000);
       if (cached) {
         setOverviewData(cached);
         setCachedData(cached);
@@ -232,8 +243,11 @@ const Dashboard = ({ user }) => {
     }
   };
 
+  // FIXED: Extract bookings from overview data
+  const allBookings = DashboardFallbacks.extractBookings(overviewData);
+  
   // Categorize bookings
-  const categorized = DashboardFallbacks.categorizeBookings(overviewData?.todaySchedule);
+  const categorized = DashboardFallbacks.categorizeBookings(allBookings);
   
   // Calculate revenue based on active view
   const getDisplayRevenue = () => {
@@ -259,7 +273,7 @@ const Dashboard = ({ user }) => {
       case 'past':
         return categorized.past;
       default:
-        return overviewData?.todaySchedule || [];
+        return allBookings;
     }
   };
 
