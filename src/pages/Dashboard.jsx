@@ -9,6 +9,7 @@ const Dashboard = ({ user }) => {
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [cachedData, setCachedData] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
   
   const navigate = useNavigate();
 
@@ -31,6 +32,21 @@ const Dashboard = ({ user }) => {
           if (cached) {
             const { data, timestamp } = JSON.parse(cached);
             if (Date.now() - timestamp < maxAge) {
+              return data;
+            }
+          }
+        } catch (e) {}
+        return null;
+      },
+
+      // FAIL SAFE: Load from cache on init
+      initFromCache: () => {
+        try {
+          const cached = localStorage.getItem('dashboard_overview');
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            // Use cache if less than 1 hour old
+            if (Date.now() - timestamp < 3600000) {
               return data;
             }
           }
@@ -59,36 +75,136 @@ const Dashboard = ({ user }) => {
       }, 0);
     },
 
-    // Retry with backoff
-    async retry(fn, maxRetries = 2) {
+    // FAIL HARD: Retry with backoff
+    async retry(fn, maxRetries = 3) {
+      let lastError;
       for (let i = 0; i < maxRetries; i++) {
         try {
           return await fn();
         } catch (err) {
-          if (i === maxRetries - 1) throw err;
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+          lastError = err;
+          if (i === maxRetries - 1) break;
+          
+          // Don't retry auth errors
+          if (err.message?.includes('401') || err.message?.includes('Session expired')) {
+            throw err;
+          }
+          
+          const wait = 1000 * Math.pow(2, i);
+          console.log(`🔄 Dashboard retry ${i + 1}/${maxRetries} in ${wait}ms`);
+          await new Promise(r => setTimeout(r, wait));
         }
       }
+      throw lastError;
+    },
+
+    // FAIL HARD: Timeout wrapper
+    async withTimeout(promise, ms = 8000) {
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), ms)
+      );
+      return Promise.race([promise, timeout]);
     },
 
     // Network status
     network: {
       isOnline: navigator.onLine,
+      listeners: [],
+      
       init() {
-        window.addEventListener('online', () => { this.isOnline = true; });
-        window.addEventListener('offline', () => { this.isOnline = false; });
+        window.addEventListener('online', () => { 
+          this.isOnline = true;
+          this.listeners.forEach(fn => fn(true));
+        });
+        window.addEventListener('offline', () => { 
+          this.isOnline = false;
+          this.listeners.forEach(fn => fn(false));
+        });
+      },
+      
+      subscribe(listener) {
+        this.listeners.push(listener);
+        return () => {
+          this.listeners = this.listeners.filter(l => l !== listener);
+        };
       }
+    },
+
+    // FAIL SAFE: Session validator
+    validateSession: () => {
+      const token = localStorage.getItem('adminToken');
+      const email = localStorage.getItem('adminEmail');
+      
+      if (!token || !email) return false;
+      
+      // Simple token format check
+      if (token.split('.').length === 3) {
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            return false; // Expired
+          }
+        } catch (e) {}
+      }
+      
+      return true;
+    },
+
+    // FAIL SAFE: Error messages
+    messages: {
+      network: 'Network connection lost. Showing cached data.',
+      timeout: 'Request timed out. Please try again.',
+      server: 'Server error. Using cached data.',
+      session: 'Session expired. Please login again.',
+      default: 'Unable to load dashboard data.'
+    },
+
+    // Track failures
+    failureCount: 0,
+    lastFailure: null,
+    
+    recordFailure() {
+      this.failureCount++;
+      this.lastFailure = Date.now();
+    },
+    
+    shouldBlock() {
+      if (this.failureCount >= 5 && Date.now() - this.lastFailure < 300000) {
+        return true;
+      }
+      if (Date.now() - this.lastFailure > 300000) {
+        this.failureCount = 0;
+      }
+      return false;
     }
   };
 
   // Initialize
   DashboardFallbacks.network.init();
+  
+  // FAIL SAFE: Try to load from cache on initial render
+  const initialCachedData = DashboardFallbacks.cache.initFromCache();
   // ===== END FALLBACKS =====
 
-  const fetchOverviewData = async (retry = true) => {
+  const fetchOverviewData = async (isRetry = false) => {
     try {
       setLoading(true);
       setError('');
+      
+      // FAIL HARD: Check circuit breaker
+      if (DashboardFallbacks.shouldBlock()) {
+        setError('Too many failed attempts. Please try again later.');
+        setLoading(false);
+        return;
+      }
+
+      // FAIL SAFE: Check session first
+      if (!DashboardFallbacks.validateSession()) {
+        localStorage.removeItem('adminEmail');
+        localStorage.removeItem('adminToken');
+        navigate('/login');
+        return;
+      }
       
       // Try cache first if offline
       if (!DashboardFallbacks.network.isOnline) {
@@ -96,18 +212,22 @@ const Dashboard = ({ user }) => {
         if (cached) {
           setOverviewData(cached);
           setCachedData(cached);
+          setError(DashboardFallbacks.messages.network);
           setLoading(false);
           return;
         }
       }
 
       const fetchFn = async () => {
-        const response = await fetch('https://okz.onrender.com/api/v1/admin/overview', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        // FAIL HARD: Add timeout to fetch
+        const response = await DashboardFallbacks.withTimeout(
+          fetch('https://okz.onrender.com/api/v1/admin/overview', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+              'Content-Type': 'application/json'
+            }
+          })
+        );
         
         if (!response.ok) {
           if (response.status === 401) {
@@ -122,9 +242,11 @@ const Dashboard = ({ user }) => {
         return await response.json();
       };
 
-      const data = retry 
-        ? await DashboardFallbacks.retry(fetchFn)
-        : await fetchFn();
+      // FAIL HARD: Use retry logic
+      const data = await DashboardFallbacks.retry(fetchFn, 3);
+      
+      // Reset failure count on success
+      DashboardFallbacks.failureCount = 0;
       
       // Ensure each booking has proper fields
       if (data.todaySchedule) {
@@ -140,32 +262,60 @@ const Dashboard = ({ user }) => {
       
       setOverviewData(data);
       setCachedData(data);
+      setError('');
       
       // Save to cache
       DashboardFallbacks.cache.save('overview', data);
       
     } catch (err) {
       console.error('Dashboard fetch error:', err);
+      DashboardFallbacks.recordFailure();
       
-      // Try cache as fallback
+      // FAIL SAFE: Try cache as fallback
       const cached = DashboardFallbacks.cache.load('overview', 86400000);
       if (cached) {
         setOverviewData(cached);
         setCachedData(cached);
-        setError('Using cached data - ' + err.message);
+        
+        // Set appropriate error message
+        if (err.message === 'Request timeout') {
+          setError(DashboardFallbacks.messages.timeout);
+        } else if (!DashboardFallbacks.network.isOnline) {
+          setError(DashboardFallbacks.messages.network);
+        } else {
+          setError(DashboardFallbacks.messages.server);
+        }
       } else {
-        setError(err.message);
+        setError(err.message || DashboardFallbacks.messages.default);
       }
     } finally {
       setLoading(false);
     }
   };
 
+  // FAIL SAFE: Network status subscription
   useEffect(() => {
+    const unsubscribe = DashboardFallbacks.network.subscribe((isOnline) => {
+      if (isOnline && error) {
+        // Auto-retry when coming back online
+        fetchOverviewData(true);
+      }
+    });
+    
+    return unsubscribe;
+  }, [error]);
+
+  // FAIL SAFE: Load from cache immediately if available
+  useEffect(() => {
+    if (initialCachedData) {
+      setOverviewData(initialCachedData);
+      setCachedData(initialCachedData);
+    }
     fetchOverviewData();
   }, []);
 
   const handleRetry = () => {
+    setRetryCount(prev => prev + 1);
     fetchOverviewData(true);
   };
 
@@ -249,6 +399,37 @@ const Dashboard = ({ user }) => {
         </div>
       )}
 
+      {/* Error message with retry */}
+      {error && (
+        <div style={{
+          backgroundColor: 'rgba(255,193,7,0.1)',
+          border: '1px solid #ffc107',
+          color: '#856404',
+          padding: '12px 16px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <span>⚠️ {error}</span>
+          <button
+            onClick={handleRetry}
+            style={{
+              background: 'transparent',
+              border: '1px solid #856404',
+              color: '#856404',
+              padding: '4px 12px',
+              borderRadius: '16px',
+              cursor: 'pointer',
+              fontSize: '0.8rem'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <header>
         <div className="header-left">
           <h1>Welcome back, {user?.email?.split('@')[0] || 'Admin'}</h1>
@@ -266,7 +447,7 @@ const Dashboard = ({ user }) => {
         </button>
       </header>
 
-      {/* Stats Grid - Simplified to Today Only */}
+      {/* Stats Grid */}
       <div className="stats-grid">
         <div className="glass-panel stat-card">
           <h3>Today's Revenue</h3>
@@ -293,7 +474,7 @@ const Dashboard = ({ user }) => {
         </div>
       </div>
 
-      {/* Today's Schedule - Only Today's Bookings */}
+      {/* Today's Schedule */}
       <div className="glass-panel live-schedule">
         <div className="schedule-header">
           <h2>Today's Schedule</h2>
@@ -407,7 +588,7 @@ const Dashboard = ({ user }) => {
         
         <button 
           className="glass-panel quick-action-btn" 
-          onClick={() => fetchOverviewData()}
+          onClick={handleRetry}
         >
           <span className="action-text">Refresh Data</span>
         </button>

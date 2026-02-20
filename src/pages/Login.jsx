@@ -1,5 +1,5 @@
 // src/pages/Login.jsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../styles/Auth.css';
 
@@ -10,16 +10,85 @@ const Login = ({ setUser }) => {
   const [error, setError] = useState('');
   const [breachWarning, setBreachWarning] = useState('');
   const [showBreachWarning, setShowBreachWarning] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const navigate = useNavigate();
 
   // ===== FALLBACKS - Isolated inline =====
   const LoginFallbacks = {
-    // Simulated breach check - in production, you'd use HaveIBeenPwned API
-    checkBreachStatus: (password) => {
-      // This is a SIMULATED check for demo purposes
-      // In production, you would call an actual API
+    // FAIL HARD: Retry with backoff
+    async retry(fn, maxRetries = 3) {
+      let lastError;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          return await fn();
+        } catch (err) {
+          lastError = err;
+          if (i === maxRetries - 1) break;
+          
+          const wait = 1000 * Math.pow(2, i);
+          console.log(`🔄 Login retry ${i + 1}/${maxRetries} in ${wait}ms`);
+          await new Promise(r => setTimeout(r, wait));
+        }
+      }
+      throw lastError;
+    },
+
+    // FAIL HARD: Timeout wrapper
+    async withTimeout(promise, ms = 8000) {
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), ms)
+      );
+      return Promise.race([promise, timeout]);
+    },
+
+    // FAIL SAFE: Network status
+    network: {
+      isOnline: navigator.onLine,
+      init() {
+        window.addEventListener('online', () => { this.isOnline = true; });
+        window.addEventListener('offline', () => { this.isOnline = false; });
+      }
+    },
+
+    // FAIL SAFE: Rate limit tracking
+    attemptTracker: {
+      count: 0,
+      firstAttempt: null,
       
-      // Common weak passwords that are frequently breached
+      recordAttempt() {
+        this.count++;
+        if (!this.firstAttempt) {
+          this.firstAttempt = Date.now();
+        }
+      },
+      
+      reset() {
+        this.count = 0;
+        this.firstAttempt = null;
+      },
+      
+      isRateLimited() {
+        if (this.count >= 5 && this.firstAttempt) {
+          // Reset after 15 minutes
+          if (Date.now() - this.firstAttempt > 900000) {
+            this.reset();
+            return false;
+          }
+          return true;
+        }
+        return false;
+      },
+      
+      getRemainingTime() {
+        if (!this.firstAttempt) return 0;
+        const elapsed = Date.now() - this.firstAttempt;
+        const remaining = Math.max(0, 900000 - elapsed);
+        return Math.ceil(remaining / 60000); // minutes
+      }
+    },
+
+    // Simulated breach check
+    checkBreachStatus: (password) => {
       const commonBreachedPasswords = [
         'password', 'password123', 'admin', 'admin123', '123456', 
         '12345678', 'qwerty', 'qwerty123', 'letmein', 'welcome',
@@ -27,7 +96,6 @@ const Login = ({ setUser }) => {
         '111111', '123123', '000000', 'adminadmin', 'passw0rd'
       ];
       
-      // Check if password is in common breached list
       if (commonBreachedPasswords.includes(password.toLowerCase())) {
         return {
           breached: true,
@@ -35,7 +103,6 @@ const Login = ({ setUser }) => {
         };
       }
       
-      // Additional check: passwords shorter than 8 chars are more likely breached
       if (password.length < 8) {
         return {
           breached: true,
@@ -43,75 +110,110 @@ const Login = ({ setUser }) => {
         };
       }
       
-      // No breach detected
-      return {
-        breached: false,
-        message: ''
-      };
+      return { breached: false, message: '' };
     },
     
-    // Store breach acknowledgment in session (so it doesn't show every time)
     acknowledgeBreach: (email) => {
       try {
         const acknowledged = JSON.parse(sessionStorage.getItem('breach_acknowledged') || '{}');
         acknowledged[email] = Date.now();
         sessionStorage.setItem('breach_acknowledged', JSON.stringify(acknowledged));
-      } catch (e) {
-        // Ignore storage errors
-      }
+      } catch (e) {}
     },
     
-    // Check if breach was already acknowledged for this email today
     wasAcknowledged: (email) => {
       try {
         const acknowledged = JSON.parse(sessionStorage.getItem('breach_acknowledged') || '{}');
         const timestamp = acknowledged[email];
         if (timestamp) {
-          // If acknowledged in last 24 hours, don't show again
           return (Date.now() - timestamp) < 86400000;
         }
       } catch (e) {}
       return false;
+    },
+
+    // FAIL SAFE: Error messages
+    messages: {
+      network: 'Network connection unavailable. Please check your internet.',
+      timeout: 'Request timed out. Please try again.',
+      server: 'Server error. Please try again later.',
+      rateLimit: 'Too many attempts. Please wait {minutes} minutes.',
+      default: 'Login failed. Please try again.'
     }
   };
+
+  // Initialize
+  LoginFallbacks.network.init();
   // ===== END FALLBACKS =====
+
+  // FAIL SAFE: Clear rate limit on successful login elsewhere
+  useEffect(() => {
+    return () => {
+      // Reset on unmount (navigation)
+      LoginFallbacks.attemptTracker.reset();
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // FAIL HARD: Check network first
+    if (!LoginFallbacks.network.isOnline) {
+      setError(LoginFallbacks.messages.network);
+      return;
+    }
+
+    // FAIL HARD: Check rate limiting
+    if (LoginFallbacks.attemptTracker.isRateLimited()) {
+      const minutes = LoginFallbacks.attemptTracker.getRemainingTime();
+      setError(LoginFallbacks.messages.rateLimit.replace('{minutes}', minutes));
+      return;
+    }
+
     setLoading(true);
     setError('');
     setBreachWarning('');
 
     try {
-      // Check for breach BEFORE login attempt (but don't block)
+      // FAIL SAFE: Check for breach (non-blocking)
       const breachCheck = LoginFallbacks.checkBreachStatus(password);
       if (breachCheck.breached && !LoginFallbacks.wasAcknowledged(email)) {
         setBreachWarning(breachCheck.message);
         setShowBreachWarning(true);
-        // Continue with login - warning only, no block
       }
 
-      const response = await fetch('https://okz.onrender.com/api/v1/admin/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
+      // FAIL HARD: Add timeout and retry to fetch
+      const response = await LoginFallbacks.retry(async () => {
+        return await LoginFallbacks.withTimeout(
+          fetch('https://okz.onrender.com/api/v1/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          })
+        );
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // FAIL HARD: Track failed attempt
+        LoginFallbacks.attemptTracker.recordAttempt();
         throw new Error(data.message || 'Login failed');
       }
+
+      // FAIL SAFE: Reset rate limit on success
+      LoginFallbacks.attemptTracker.reset();
 
       // Store session
       localStorage.setItem('adminEmail', email);
       if (data.token) {
         localStorage.setItem('adminToken', data.token);
+        
+        // Store login timestamp for session management
+        localStorage.setItem('adminLoginTime', Date.now().toString());
       }
       
-      // If there was a breach warning and user logged in successfully, acknowledge it
+      // Acknowledge breach warning if shown
       if (breachWarning) {
         LoginFallbacks.acknowledgeBreach(email);
       }
@@ -120,7 +222,16 @@ const Login = ({ setUser }) => {
       navigate('/dashboard');
       
     } catch (err) {
-      setError(err.message || 'Invalid credentials. Please try again.');
+      console.error('Login error:', err);
+      
+      // FAIL SAFE: Set appropriate error message
+      if (err.message === 'Request timeout') {
+        setError(LoginFallbacks.messages.timeout);
+      } else if (!LoginFallbacks.network.isOnline) {
+        setError(LoginFallbacks.messages.network);
+      } else {
+        setError(err.message || LoginFallbacks.messages.default);
+      }
     } finally {
       setLoading(false);
     }
@@ -128,7 +239,6 @@ const Login = ({ setUser }) => {
 
   const dismissBreachWarning = () => {
     setShowBreachWarning(false);
-    // Acknowledge so it doesn't show again for 24h
     if (email) {
       LoginFallbacks.acknowledgeBreach(email);
     }
@@ -140,10 +250,40 @@ const Login = ({ setUser }) => {
         <img src="/okz-logo.png" alt="OKZ Logo" className="logo" />
         <h1>Admin Portal</h1>
         
-        {/* Error Banner */}
-        {error && <div className="error-banner">{error}</div>}
+        {/* FAIL SAFE: Error Banner */}
+        {error && (
+          <div className="error-banner" style={{
+            backgroundColor: '#f8d7da',
+            border: '1px solid #f5c6cb',
+            color: '#721c24',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            <span>⚠️ {error}</span>
+            {error.includes('timeout') && (
+              <button
+                onClick={handleSubmit}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #721c24',
+                  color: '#721c24',
+                  padding: '4px 12px',
+                  borderRadius: '16px',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem'
+                }}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         
-        {/* Breach Warning Banner - Non-blocking, just informational */}
+        {/* Breach Warning Banner */}
         {showBreachWarning && breachWarning && (
           <div className="breach-warning-banner" style={{
             backgroundColor: '#fff3cd',
@@ -194,6 +334,8 @@ const Login = ({ setUser }) => {
               required
               placeholder="Enter your email"
               autoComplete="email"
+              disabled={loading}
+              style={{ opacity: loading ? 0.7 : 1 }}
             />
           </div>
           
@@ -207,9 +349,11 @@ const Login = ({ setUser }) => {
               required
               placeholder="Enter your password"
               autoComplete="current-password"
+              disabled={loading}
+              style={{ opacity: loading ? 0.7 : 1 }}
             />
             
-            {/* Live breach check as user types (optional) */}
+            {/* Live breach check */}
             {password.length > 0 && !loading && (
               <div style={{ 
                 fontSize: '0.75rem', 
@@ -223,20 +367,33 @@ const Login = ({ setUser }) => {
             )}
           </div>
           
+          {/* FAIL SAFE: Rate limit info */}
+          {LoginFallbacks.attemptTracker.count > 0 && !error && (
+            <div style={{
+              fontSize: '0.7rem',
+              color: '#666',
+              marginTop: '5px',
+              textAlign: 'right'
+            }}>
+              Attempts: {LoginFallbacks.attemptTracker.count}/5
+            </div>
+          )}
+          
           <button 
             type="submit" 
-            disabled={loading}
+            disabled={loading || LoginFallbacks.attemptTracker.isRateLimited()}
             className={loading ? 'loading' : ''}
             style={{
-              opacity: loading ? 0.7 : 1,
-              cursor: loading ? 'not-allowed' : 'pointer'
+              opacity: (loading || LoginFallbacks.attemptTracker.isRateLimited()) ? 0.7 : 1,
+              cursor: (loading || LoginFallbacks.attemptTracker.isRateLimited()) ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? 'Authenticating...' : 'Sign In'}
+            {loading ? 'Authenticating...' : 
+             LoginFallbacks.attemptTracker.isRateLimited() ? 'Too Many Attempts' : 'Sign In'}
           </button>
         </form>
         
-        {/* Security note */}
+        {/* FAIL SAFE: Security note */}
         <div style={{
           marginTop: '20px',
           fontSize: '0.75rem',
@@ -247,6 +404,18 @@ const Login = ({ setUser }) => {
         }}>
           <span>🔐 We check passwords against known data breaches for your security</span>
         </div>
+
+        {/* FAIL SAFE: Debug info in development */}
+        {process.env.NODE_ENV === 'development' && (
+          <div style={{
+            marginTop: '10px',
+            fontSize: '0.7rem',
+            color: '#999',
+            textAlign: 'center'
+          }}>
+            <span>🛡️ Fallbacks active: Timeout, Retry, Rate Limit</span>
+          </div>
+        )}
       </div>
     </div>
   );

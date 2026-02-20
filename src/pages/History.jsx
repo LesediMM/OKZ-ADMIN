@@ -15,20 +15,59 @@ const History = ({ user }) => {
   const [showModal, setShowModal] = useState(false);
   const [courtFilter, setCourtFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [retryCount, setRetryCount] = useState(0);
   
-  // NEW: View tabs
-  const [activeView, setActiveView] = useState('today'); // 'today', 'upcoming', 'past', 'all'
+  // View tabs
+  const [activeView, setActiveView] = useState('today');
   
   const navigate = useNavigate();
 
   // ===== FALLBACKS - Isolated inline =====
   const HistoryFallbacks = {
+    // Cache management (extended)
+    cache: {
+      save: (key, data) => {
+        try {
+          localStorage.setItem(`history_${key}`, JSON.stringify({
+            data,
+            timestamp: Date.now()
+          }));
+        } catch (e) {}
+      },
+      
+      load: (key, maxAge = 300000) => {
+        try {
+          const cached = localStorage.getItem(`history_${key}`);
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < maxAge) {
+              return data;
+            }
+          }
+        } catch (e) {}
+        return null;
+      },
+
+      // FAIL SAFE: Load from cache on init
+      initFromCache: () => {
+        try {
+          const cached = localStorage.getItem('history_all');
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            // Use cache if less than 1 hour old
+            if (Date.now() - timestamp < 3600000) {
+              return data;
+            }
+          }
+        } catch (e) {}
+        return null;
+      }
+    },
+
     // Date categorization
     categorizeBookings: (bookings) => {
       const now = new Date();
       const today = new Date(now.setHours(0, 0, 0, 0));
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
       const endOfToday = new Date(today);
       endOfToday.setHours(23, 59, 59, 999);
       
@@ -48,111 +87,248 @@ const History = ({ user }) => {
       };
     },
     
-    // Simple revenue calculation (all bookings considered paid)
+    // Revenue calculation
     calculateRevenue: (bookings) => {
       return bookings.reduce((sum, b) => {
-        // Use price or revenue field, default to 400 for padel, 150 for tennis
         const amount = b.price || b.revenue || (b.courtType?.toLowerCase() === 'padel' ? 400 : 150);
         return sum + (b.status?.toLowerCase() === 'cancelled' ? 0 : amount);
       }, 0);
     },
     
-    // Cache for offline support
-    cache: {
-      save: (key, data) => {
-        try {
-          localStorage.setItem(`history_${key}`, JSON.stringify({
-            data,
-            timestamp: Date.now()
-          }));
-        } catch (e) {}
-      },
-      
-      load: (key, maxAge = 300000) => { // 5 minutes default
-        try {
-          const cached = localStorage.getItem(`history_${key}`);
-          if (cached) {
-            const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < maxAge) {
-              return data;
-            }
-          }
-        } catch (e) {}
-        return null;
-      }
-    },
-    
-    // Payment simplification - all bookings are considered paid unless cancelled
+    // Payment simplification
     simplifyPayment: (booking) => {
       return {
         ...booking,
         paymentStatus: booking.status?.toLowerCase() === 'cancelled' ? 'refunded' : 'paid',
         revenue: booking.price || booking.revenue || (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150)
       };
+    },
+
+    // FAIL HARD: Retry with backoff
+    async retry(fn, maxRetries = 3) {
+      let lastError;
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          return await fn();
+        } catch (err) {
+          lastError = err;
+          if (i === maxRetries - 1) break;
+          
+          // Don't retry auth errors
+          if (err.message?.includes('401') || err.message?.includes('Session expired')) {
+            throw err;
+          }
+          
+          const wait = 1000 * Math.pow(2, i);
+          console.log(`🔄 History retry ${i + 1}/${maxRetries} in ${wait}ms`);
+          await new Promise(r => setTimeout(r, wait));
+        }
+      }
+      throw lastError;
+    },
+
+    // FAIL HARD: Timeout wrapper
+    async withTimeout(promise, ms = 10000) {
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), ms)
+      );
+      return Promise.race([promise, timeout]);
+    },
+
+    // Network status
+    network: {
+      isOnline: navigator.onLine,
+      listeners: [],
+      
+      init() {
+        window.addEventListener('online', () => { 
+          this.isOnline = true;
+          this.listeners.forEach(fn => fn(true));
+        });
+        window.addEventListener('offline', () => { 
+          this.isOnline = false;
+          this.listeners.forEach(fn => fn(false));
+        });
+      },
+      
+      subscribe(listener) {
+        this.listeners.push(listener);
+        return () => {
+          this.listeners = this.listeners.filter(l => l !== listener);
+        };
+      }
+    },
+
+    // FAIL SAFE: Session validator
+    validateSession: () => {
+      const token = localStorage.getItem('adminToken');
+      const email = localStorage.getItem('adminEmail');
+      
+      if (!token || !email) return false;
+      
+      // Simple token format check
+      if (token.split('.').length === 3) {
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            return false;
+          }
+        } catch (e) {}
+      }
+      
+      return true;
+    },
+
+    // FAIL SAFE: Error messages
+    messages: {
+      network: 'Network connection lost. Showing cached data.',
+      timeout: 'Request timed out. Please try again.',
+      server: 'Server error. Using cached data.',
+      session: 'Session expired. Please login again.',
+      default: 'Unable to load history data.'
+    },
+
+    // Track failures
+    failureCount: 0,
+    lastFailure: null,
+    
+    recordFailure() {
+      this.failureCount++;
+      this.lastFailure = Date.now();
+    },
+    
+    shouldBlock() {
+      if (this.failureCount >= 5 && Date.now() - this.lastFailure < 300000) {
+        return true;
+      }
+      if (Date.now() - this.lastFailure > 300000) {
+        this.failureCount = 0;
+      }
+      return false;
+    },
+
+    // Export/Import functionality (FAIL SAFE)
+    exportBookings: (bookings) => {
+      try {
+        const dataStr = JSON.stringify(bookings, null, 2);
+        const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+        const exportFileDefaultName = `okz_history_${new Date().toISOString().split('T')[0]}.json`;
+        
+        const linkElement = document.createElement('a');
+        linkElement.setAttribute('href', dataUri);
+        linkElement.setAttribute('download', exportFileDefaultName);
+        linkElement.click();
+      } catch (e) {
+        console.error('Export failed:', e);
+      }
     }
   };
+
+  // Initialize
+  HistoryFallbacks.network.init();
+  const initialCachedData = HistoryFallbacks.cache.initFromCache();
   // ===== END FALLBACKS =====
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (isRetry = false) => {
     try {
       setLoading(true);
       setError('');
       
-      // Try cache first
-      const cached = HistoryFallbacks.cache.load('all');
-      if (cached) {
-        setBookings(cached.map(HistoryFallbacks.simplifyPayment));
-        setFilteredBookings(cached.map(HistoryFallbacks.simplifyPayment));
+      // FAIL HARD: Check circuit breaker
+      if (HistoryFallbacks.shouldBlock()) {
+        setError('Too many failed attempts. Please try again later.');
         setLoading(false);
-        // Still fetch in background
+        return;
       }
 
-      const response = await fetch('https://okz.onrender.com/api/v1/admin/history', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          localStorage.removeItem('adminEmail');
-          localStorage.removeItem('adminToken');
-          navigate('/login');
-          throw new Error('Session expired. Please login again.');
-        }
-        throw new Error(`Failed to fetch history (${response.status})`);
+      // FAIL SAFE: Check session first
+      if (!HistoryFallbacks.validateSession()) {
+        localStorage.removeItem('adminEmail');
+        localStorage.removeItem('adminToken');
+        navigate('/login');
+        return;
       }
       
-      const data = await response.json();
+      // Try cache first if offline
+      if (!HistoryFallbacks.network.isOnline) {
+        const cached = HistoryFallbacks.cache.load('all', 3600000);
+        if (cached) {
+          const simplified = cached.map(HistoryFallbacks.simplifyPayment);
+          setBookings(simplified);
+          applyViewFilter(simplified, activeView);
+          setError(HistoryFallbacks.messages.network);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // FAIL HARD: Add timeout and retry to fetch
+      const fetchFn = async () => {
+        const response = await HistoryFallbacks.withTimeout(
+          fetch('https://okz.onrender.com/api/v1/admin/history', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+              'Content-Type': 'application/json'
+            }
+          })
+        );
+        
+        if (!response.ok) {
+          if (response.status === 401) {
+            localStorage.removeItem('adminEmail');
+            localStorage.removeItem('adminToken');
+            navigate('/login');
+            throw new Error('Session expired. Please login again.');
+          }
+          throw new Error(`Failed to fetch history (${response.status})`);
+        }
+        
+        return await response.json();
+      };
+
+      // Use retry logic
+      const data = await HistoryFallbacks.retry(fetchFn, 3);
       
-      // Simplify payment data - all bookings considered paid unless cancelled
+      // Reset failure count on success
+      HistoryFallbacks.failureCount = 0;
+      
+      // Simplify payment data
       const simplifiedData = data.map(HistoryFallbacks.simplifyPayment);
       
       setBookings(simplifiedData);
-      
-      // Apply current view filter
       applyViewFilter(simplifiedData, activeView);
       
       // Save to cache
       HistoryFallbacks.cache.save('all', simplifiedData);
+      setError('');
       
     } catch (err) {
       console.error('History fetch error:', err);
-      setError(err.message);
+      HistoryFallbacks.recordFailure();
       
-      // If we have cached data, use it
-      const cached = HistoryFallbacks.cache.load('all', 86400000); // 24 hours for error fallback
+      // FAIL SAFE: Try cache as fallback
+      const cached = HistoryFallbacks.cache.load('all', 86400000);
       if (cached) {
-        setBookings(cached.map(HistoryFallbacks.simplifyPayment));
-        applyViewFilter(cached.map(HistoryFallbacks.simplifyPayment), activeView);
+        const simplified = cached.map(HistoryFallbacks.simplifyPayment);
+        setBookings(simplified);
+        applyViewFilter(simplified, activeView);
+        
+        if (err.message === 'Request timeout') {
+          setError(HistoryFallbacks.messages.timeout);
+        } else if (!HistoryFallbacks.network.isOnline) {
+          setError(HistoryFallbacks.messages.network);
+        } else {
+          setError(HistoryFallbacks.messages.server);
+        }
+      } else {
+        setError(err.message || HistoryFallbacks.messages.default);
       }
     } finally {
       setLoading(false);
     }
   };
 
-  // Apply view filter (today, upcoming, past, all)
+  // Apply view filter
   const applyViewFilter = (bookingsToFilter, view) => {
     const categorized = HistoryFallbacks.categorizeBookings(bookingsToFilter);
     
@@ -171,7 +347,24 @@ const History = ({ user }) => {
     }
   };
 
+  // FAIL SAFE: Network status subscription
   useEffect(() => {
+    const unsubscribe = HistoryFallbacks.network.subscribe((isOnline) => {
+      if (isOnline && error) {
+        fetchHistory(true);
+      }
+    });
+    
+    return unsubscribe;
+  }, [error]);
+
+  // FAIL SAFE: Load from cache immediately if available
+  useEffect(() => {
+    if (initialCachedData) {
+      const simplified = initialCachedData.map(HistoryFallbacks.simplifyPayment);
+      setBookings(simplified);
+      applyViewFilter(simplified, activeView);
+    }
     fetchHistory();
   }, []);
 
@@ -199,11 +392,10 @@ const History = ({ user }) => {
         filtered = categorized.past;
         break;
       default:
-        // all - keep as is
         break;
     }
 
-    // Then apply search
+    // Apply search
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(booking => 
@@ -235,7 +427,7 @@ const History = ({ user }) => {
       );
     }
 
-    // Status filter (simplified - only cancelled matters)
+    // Status filter
     if (statusFilter !== 'all') {
       filtered = filtered.filter(booking => 
         booking.status?.toLowerCase() === statusFilter.toLowerCase()
@@ -302,7 +494,16 @@ const History = ({ user }) => {
     setShowModal(true);
   };
 
-  // Calculate revenue - cancelled bookings don't count
+  const handleRetry = () => {
+    setRetryCount(prev => prev + 1);
+    fetchHistory(true);
+  };
+
+  const handleExport = () => {
+    HistoryFallbacks.exportBookings(filteredBookings);
+  };
+
+  // Calculate revenue
   const totalRevenue = filteredBookings.reduce((sum, b) => {
     if (b.status?.toLowerCase() === 'cancelled') return sum;
     return sum + (b.price || b.revenue || (b.courtType?.toLowerCase() === 'padel' ? 400 : 150));
@@ -313,7 +514,6 @@ const History = ({ user }) => {
     ? totalRevenue / filteredBookings.filter(b => b.status?.toLowerCase() !== 'cancelled').length 
     : 0;
 
-  // Get counts for each category
   const categorized = HistoryFallbacks.categorizeBookings(bookings);
 
   if (loading && !bookings.length) {
@@ -332,7 +532,7 @@ const History = ({ user }) => {
       <div className="dashboard-container apple-fade-in">
         <div className="error-container">
           <div className="error-banner">{error}</div>
-          <button onClick={() => fetchHistory()} className="retry-button">
+          <button onClick={handleRetry} className="retry-button">
             Try Again
           </button>
         </div>
@@ -342,6 +542,56 @@ const History = ({ user }) => {
 
   return (
     <div className="dashboard-container apple-fade-in">
+      {/* Offline/Cache indicator */}
+      {!HistoryFallbacks.network.isOnline && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#ffc107',
+          color: '#000',
+          padding: '8px 16px',
+          borderRadius: '30px',
+          fontSize: '0.85rem',
+          zIndex: 1000,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+        }}>
+          📱 Offline mode - Showing cached data
+        </div>
+      )}
+
+      {/* Error message with retry */}
+      {error && (
+        <div style={{
+          backgroundColor: 'rgba(255,193,7,0.1)',
+          border: '1px solid #ffc107',
+          color: '#856404',
+          padding: '12px 16px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <span>⚠️ {error}</span>
+          <button
+            onClick={handleRetry}
+            style={{
+              background: 'transparent',
+              border: '1px solid #856404',
+              color: '#856404',
+              padding: '4px 12px',
+              borderRadius: '16px',
+              cursor: 'pointer',
+              fontSize: '0.8rem'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <header className="history-header">
         <div className="header-left">
           <button onClick={() => navigate('/dashboard')} className="back-button">
@@ -349,7 +599,22 @@ const History = ({ user }) => {
           </button>
           <h1>Booking History</h1>
         </div>
-        <div className="header-right">
+        <div className="header-right" style={{ display: 'flex', gap: '10px' }}>
+          <button 
+            className="export-button"
+            onClick={handleExport}
+            style={{
+              background: 'transparent',
+              border: '1px solid #0071e3',
+              color: '#0071e3',
+              padding: '8px 16px',
+              borderRadius: '20px',
+              cursor: 'pointer',
+              fontSize: '0.85rem'
+            }}
+          >
+            📥 Export
+          </button>
           <button 
             className="filter-toggle"
             onClick={() => setShowFilters(!showFilters)}
@@ -359,7 +624,7 @@ const History = ({ user }) => {
         </div>
       </header>
 
-      {/* NEW: View Tabs */}
+      {/* View Tabs */}
       <div className="view-tabs" style={{
         display: 'flex',
         gap: '10px',
@@ -377,8 +642,7 @@ const History = ({ user }) => {
             background: activeView === 'today' ? '#0071e3' : 'transparent',
             color: activeView === 'today' ? 'white' : '#666',
             cursor: 'pointer',
-            fontWeight: activeView === 'today' ? '600' : '400',
-            position: 'relative'
+            fontWeight: activeView === 'today' ? '600' : '400'
           }}
         >
           Today ({categorized.today.length})
