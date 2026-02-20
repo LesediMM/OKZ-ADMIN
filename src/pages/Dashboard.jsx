@@ -8,7 +8,6 @@ const Dashboard = ({ user }) => {
   const [error, setError] = useState('');
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [activeView, setActiveView] = useState('today'); // 'today', 'upcoming', 'past'
   const [cachedData, setCachedData] = useState(null);
   
   const navigate = useNavigate();
@@ -40,8 +39,8 @@ const Dashboard = ({ user }) => {
       }
     },
 
-    // FIXED: Properly extract and categorize bookings from overview data
-    extractBookings: (data) => {
+    // Extract today's bookings from overview data
+    extractTodayBookings: (data) => {
       if (!data) return [];
       
       // The overview endpoint returns todaySchedule array
@@ -49,37 +48,7 @@ const Dashboard = ({ user }) => {
         return data.todaySchedule;
       }
       
-      // Fallback if structure is different
-      if (Array.isArray(data)) return data;
-      
       return [];
-    },
-
-    // FIXED: Categorize bookings by date
-    categorizeBookings: (bookings) => {
-      if (!bookings || !Array.isArray(bookings)) {
-        return { today: [], upcoming: [], past: [] };
-      }
-
-      const now = new Date();
-      const today = new Date(now.setHours(0, 0, 0, 0));
-      const endOfToday = new Date(today);
-      endOfToday.setHours(23, 59, 59, 999);
-
-      return {
-        today: bookings.filter(b => {
-          const bookingDate = new Date(b.date || b.time);
-          return bookingDate >= today && bookingDate <= endOfToday;
-        }),
-        upcoming: bookings.filter(b => {
-          const bookingDate = new Date(b.date || b.time);
-          return bookingDate > endOfToday;
-        }),
-        past: bookings.filter(b => {
-          const bookingDate = new Date(b.date || b.time);
-          return bookingDate < today;
-        })
-      };
     },
 
     // Calculate revenue (cancelled bookings = 0)
@@ -157,18 +126,14 @@ const Dashboard = ({ user }) => {
         ? await DashboardFallbacks.retry(fetchFn)
         : await fetchFn();
       
-      // FIXED: Ensure each booking has proper fields
+      // Ensure each booking has proper fields
       if (data.todaySchedule) {
         data.todaySchedule = data.todaySchedule.map(booking => ({
           ...booking,
-          // Ensure price exists
           price: booking.price || booking.revenue || 
                  (booking.courtType?.toLowerCase() === 'padel' ? 400 : 150),
-          // Ensure date exists (use booking.date or fallback to current)
           date: booking.date || booking.time || new Date().toISOString(),
-          // Ensure ID exists
           id: booking.id || booking._id || `temp-${Date.now()}`,
-          // Simplify status
           displayStatus: booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'
         }));
       }
@@ -230,52 +195,11 @@ const Dashboard = ({ user }) => {
     }
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-    } catch {
-      return dateString;
-    }
-  };
-
-  // FIXED: Extract bookings from overview data
-  const allBookings = DashboardFallbacks.extractBookings(overviewData);
+  // Get today's bookings only
+  const todayBookings = DashboardFallbacks.extractTodayBookings(overviewData);
   
-  // Categorize bookings
-  const categorized = DashboardFallbacks.categorizeBookings(allBookings);
-  
-  // Calculate revenue based on active view
-  const getDisplayRevenue = () => {
-    switch(activeView) {
-      case 'today':
-        return DashboardFallbacks.calculateRevenue(categorized.today);
-      case 'upcoming':
-        return DashboardFallbacks.calculateRevenue(categorized.upcoming);
-      case 'past':
-        return DashboardFallbacks.calculateRevenue(categorized.past);
-      default:
-        return overviewData?.dailyRevenue || 0;
-    }
-  };
-
-  // Get current display bookings
-  const getDisplayBookings = () => {
-    switch(activeView) {
-      case 'today':
-        return categorized.today;
-      case 'upcoming':
-        return categorized.upcoming;
-      case 'past':
-        return categorized.past;
-      default:
-        return allBookings;
-    }
-  };
+  // Calculate today's revenue
+  const todayRevenue = DashboardFallbacks.calculateRevenue(todayBookings);
 
   if (loading && !cachedData) {
     return (
@@ -303,9 +227,6 @@ const Dashboard = ({ user }) => {
       </div>
     );
   }
-
-  const displayBookings = getDisplayBookings();
-  const displayRevenue = getDisplayRevenue();
 
   return (
     <div className="dashboard-container apple-fade-in">
@@ -345,85 +266,22 @@ const Dashboard = ({ user }) => {
         </button>
       </header>
 
-      {/* View Tabs */}
-      <div className="view-tabs" style={{
-        display: 'flex',
-        gap: '10px',
-        marginBottom: '20px',
-        borderBottom: '1px solid rgba(0,0,0,0.1)',
-        paddingBottom: '10px'
-      }}>
-        <button
-          onClick={() => setActiveView('today')}
-          className={`view-tab ${activeView === 'today' ? 'active' : ''}`}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: 'none',
-            background: activeView === 'today' ? '#0071e3' : 'transparent',
-            color: activeView === 'today' ? 'white' : '#666',
-            cursor: 'pointer',
-            fontWeight: activeView === 'today' ? '600' : '400'
-          }}
-        >
-          Today ({categorized.today.length})
-        </button>
-        <button
-          onClick={() => setActiveView('upcoming')}
-          className={`view-tab ${activeView === 'upcoming' ? 'active' : ''}`}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: 'none',
-            background: activeView === 'upcoming' ? '#0071e3' : 'transparent',
-            color: activeView === 'upcoming' ? 'white' : '#666',
-            cursor: 'pointer',
-            fontWeight: activeView === 'upcoming' ? '600' : '400'
-          }}
-        >
-          Upcoming ({categorized.upcoming.length})
-        </button>
-        <button
-          onClick={() => setActiveView('past')}
-          className={`view-tab ${activeView === 'past' ? 'active' : ''}`}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: 'none',
-            background: activeView === 'past' ? '#0071e3' : 'transparent',
-            color: activeView === 'past' ? 'white' : '#666',
-            cursor: 'pointer',
-            fontWeight: activeView === 'past' ? '600' : '400'
-          }}
-        >
-          Past ({categorized.past.length})
-        </button>
-      </div>
-
-      {/* Stats Grid */}
+      {/* Stats Grid - Simplified to Today Only */}
       <div className="stats-grid">
         <div className="glass-panel stat-card">
-          <h3>{activeView === 'today' ? "Today's" : activeView === 'upcoming' ? 'Upcoming' : 'Past'} Revenue</h3>
+          <h3>Today's Revenue</h3>
           <p className="stat-value">
-            {formatCurrency(displayRevenue)}
+            {formatCurrency(todayRevenue)}
           </p>
-          <span className="stat-label">
-            {activeView === 'today' ? "Today's earnings" : 
-             activeView === 'upcoming' ? 'Future bookings' : 
-             'Completed bookings'}
-          </span>
+          <span className="stat-label">Today's earnings</span>
         </div>
         
         <div className="glass-panel stat-card">
-          <h3>{activeView === 'today' ? 'Daily' : activeView === 'upcoming' ? 'Upcoming' : 'Past'} Utilization</h3>
+          <h3>Daily Utilization</h3>
           <p className="stat-value">
-            {displayBookings.length} <span className="stat-unit">bookings</span>
+            {todayBookings.length} <span className="stat-unit">bookings</span>
           </p>
-          <span className="stat-label">
-            {activeView === 'today' ? 'Occupied today' : 
-             activeView === 'upcoming' ? 'Scheduled' : 
-             'Completed'}
-          </span>
+          <span className="stat-label">Occupied today</span>
         </div>
         
         <div className="glass-panel stat-card">
@@ -435,24 +293,20 @@ const Dashboard = ({ user }) => {
         </div>
       </div>
 
-      {/* Live Schedule */}
+      {/* Today's Schedule - Only Today's Bookings */}
       <div className="glass-panel live-schedule">
         <div className="schedule-header">
-          <h2>
-            {activeView === 'today' ? "Today's Schedule" : 
-             activeView === 'upcoming' ? 'Upcoming Bookings' : 
-             'Past Bookings'}
-          </h2>
+          <h2>Today's Schedule</h2>
           <div className="schedule-controls">
             <span className="schedule-count">
-              {displayBookings.length} bookings
+              {todayBookings.length} bookings
             </span>
           </div>
         </div>
         
         <div className="schedule-list detailed">
-          {displayBookings.length > 0 ? (
-            displayBookings.map((booking) => (
+          {todayBookings.length > 0 ? (
+            todayBookings.map((booking) => (
               <div 
                 key={booking.id} 
                 className={`schedule-card ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled-card' : ''}`}
@@ -464,7 +318,7 @@ const Dashboard = ({ user }) => {
               >
                 <div className="schedule-card-header">
                   <div className="time-badge">
-                    {activeView === 'past' ? formatDate(booking.date) : formatTime(booking.time)}
+                    {formatTime(booking.time)}
                   </div>
                   <span className={`status-pill ${booking.status?.toLowerCase() === 'cancelled' ? 'cancelled' : 'paid'}`}>
                     {booking.status === 'cancelled' ? 'Cancelled' : 'Paid'}
@@ -525,12 +379,8 @@ const Dashboard = ({ user }) => {
             ))
           ) : (
             <div className="empty-state">
-              <p>No {activeView} bookings found</p>
-              <span className="empty-subtext">
-                {activeView === 'today' ? 'Check back later' : 
-                 activeView === 'upcoming' ? 'No future bookings scheduled' : 
-                 'No past bookings available'}
-              </span>
+              <p>No bookings scheduled for today</p>
+              <span className="empty-subtext">Check back later</span>
             </div>
           )}
         </div>
@@ -541,11 +391,11 @@ const Dashboard = ({ user }) => {
         <button 
           className="glass-panel quick-action-btn" 
           onClick={() => {
-            navigator.clipboard.writeText(JSON.stringify(displayBookings, null, 2));
-            alert(`${activeView} schedule copied to clipboard!`);
+            navigator.clipboard.writeText(JSON.stringify(todayBookings, null, 2));
+            alert('Today\'s schedule copied to clipboard!');
           }}
         >
-          <span className="action-text">Copy {activeView} Schedule</span>
+          <span className="action-text">Copy Today's Schedule</span>
         </button>
         
         <button 
@@ -607,7 +457,7 @@ const Dashboard = ({ user }) => {
                   <div className="detail-item">
                     <span className="detail-label">Date:</span>
                     <span className="detail-value">
-                      {formatDate(selectedBooking.date) || new Date().toLocaleDateString()}
+                      {new Date().toLocaleDateString()}
                     </span>
                   </div>
                   <div className="detail-item">
