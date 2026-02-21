@@ -64,12 +64,22 @@ const History = ({ user }) => {
       }
     },
 
-    // Date categorization
+    // Date categorization - UPDATED: 30 days past, 30 days future
     categorizeBookings: (bookings) => {
       const now = new Date();
       const today = new Date(now.setHours(0, 0, 0, 0));
       const endOfToday = new Date(today);
       endOfToday.setHours(23, 59, 59, 999);
+      
+      // Calculate 30 days ago from today (midnight)
+      const thirtyDaysAgo = new Date(today);
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+      
+      // Calculate 30 days from today (end of day)
+      const thirtyDaysFromNow = new Date(today);
+      thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+      thirtyDaysFromNow.setHours(23, 59, 59, 999);
       
       return {
         today: bookings.filter(b => {
@@ -78,11 +88,11 @@ const History = ({ user }) => {
         }),
         upcoming: bookings.filter(b => {
           const bookingDate = new Date(b.date);
-          return bookingDate > endOfToday;
+          return bookingDate > endOfToday && bookingDate <= thirtyDaysFromNow;
         }),
         past: bookings.filter(b => {
           const bookingDate = new Date(b.date);
-          return bookingDate < today;
+          return bookingDate < today && bookingDate >= thirtyDaysAgo;
         })
       };
     },
@@ -660,7 +670,7 @@ const History = ({ user }) => {
             fontWeight: activeView === 'upcoming' ? '600' : '400'
           }}
         >
-          Upcoming ({categorized.upcoming.length})
+          Next 30 Days ({categorized.upcoming.length})
         </button>
         <button
           onClick={() => setActiveView('past')}
@@ -675,7 +685,7 @@ const History = ({ user }) => {
             fontWeight: activeView === 'past' ? '600' : '400'
           }}
         >
-          Past ({categorized.past.length})
+          Last 30 Days ({categorized.past.length})
         </button>
         <button
           onClick={() => setActiveView('all')}
@@ -884,7 +894,13 @@ const History = ({ user }) => {
                     <p>
                       {searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all'
                         ? 'No bookings match your filters' 
-                        : `No ${activeView !== 'all' ? activeView : ''} bookings available`}
+                        : activeView === 'past' 
+                          ? 'No bookings from the last 30 days' 
+                          : activeView === 'upcoming' 
+                            ? 'No bookings in the next 30 days'
+                            : activeView === 'today'
+                              ? 'No bookings for today'
+                              : `No ${activeView !== 'all' ? activeView : ''} bookings available`}
                     </p>
                     {(searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all') && (
                       <button 
