@@ -634,7 +634,7 @@ const History = ({ user }) => {
         </div>
       </header>
 
-      {/* View Tabs */}
+      {/* View Tabs - All Time tab removed */}
       <div className="view-tabs" style={{
         display: 'flex',
         gap: '10px',
@@ -686,21 +686,6 @@ const History = ({ user }) => {
           }}
         >
           Last 30 Days ({categorized.past.length})
-        </button>
-        <button
-          onClick={() => setActiveView('all')}
-          className={`view-tab ${activeView === 'all' ? 'active' : ''}`}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: 'none',
-            background: activeView === 'all' ? '#0071e3' : 'transparent',
-            color: activeView === 'all' ? 'white' : '#666',
-            cursor: 'pointer',
-            fontWeight: activeView === 'all' ? '600' : '400'
-          }}
-        >
-          All Time ({bookings.length})
         </button>
       </div>
 
@@ -900,7 +885,7 @@ const History = ({ user }) => {
                             ? 'No bookings in the next 30 days'
                             : activeView === 'today'
                               ? 'No bookings for today'
-                              : `No ${activeView !== 'all' ? activeView : ''} bookings available`}
+                              : 'No bookings available'}
                     </p>
                     {(searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all') && (
                       <button 
