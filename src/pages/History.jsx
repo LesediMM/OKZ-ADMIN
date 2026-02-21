@@ -17,12 +17,6 @@ const History = ({ user }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [retryCount, setRetryCount] = useState(0);
   
-  // Pagination state
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalBookings, setTotalBookings] = useState(0);
-  const limit = 20; // Items per page
-  
   // View tabs
   const [activeView, setActiveView] = useState('today');
   
@@ -235,7 +229,7 @@ const History = ({ user }) => {
   const initialCachedData = HistoryFallbacks.cache.initFromCache();
   // ===== END FALLBACKS =====
 
-  const fetchHistory = async (isRetry = false, pageNum = page) => {
+  const fetchHistory = async (isRetry = false) => {
     try {
       setLoading(true);
       setError('');
@@ -257,12 +251,10 @@ const History = ({ user }) => {
       
       // Try cache first if offline
       if (!HistoryFallbacks.network.isOnline) {
-        const cached = HistoryFallbacks.cache.load(`page_${pageNum}`, 3600000);
+        const cached = HistoryFallbacks.cache.load('all', 3600000);
         if (cached) {
-          const simplified = cached.bookings.map(HistoryFallbacks.simplifyPayment);
+          const simplified = cached.map(HistoryFallbacks.simplifyPayment);
           setBookings(simplified);
-          setTotalPages(cached.totalPages);
-          setTotalBookings(cached.total);
           applyViewFilter(simplified, activeView);
           setError(HistoryFallbacks.messages.network);
           setLoading(false);
@@ -270,10 +262,10 @@ const History = ({ user }) => {
         }
       }
 
-      // FAIL HARD: Add timeout and retry to fetch WITH PAGINATION
+      // FAIL HARD: Add timeout and retry to fetch
       const fetchFn = async () => {
         const response = await HistoryFallbacks.withTimeout(
-          fetch(`https://okz.onrender.com/api/v1/admin/history?page=${pageNum}&limit=${limit}`, {
+          fetch('https://okz.onrender.com/api/v1/admin/history', {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
               'Content-Type': 'application/json'
@@ -301,19 +293,13 @@ const History = ({ user }) => {
       HistoryFallbacks.failureCount = 0;
       
       // Simplify payment data
-      const simplifiedData = data.bookings ? data.bookings.map(HistoryFallbacks.simplifyPayment) : [];
+      const simplifiedData = data.map(HistoryFallbacks.simplifyPayment);
       
       setBookings(simplifiedData);
-      setTotalPages(data.pagination?.pages || 1);
-      setTotalBookings(data.pagination?.total || simplifiedData.length);
       applyViewFilter(simplifiedData, activeView);
       
-      // Save to cache with pagination info
-      HistoryFallbacks.cache.save(`page_${pageNum}`, {
-        bookings: simplifiedData,
-        totalPages: data.pagination?.pages || 1,
-        total: data.pagination?.total || simplifiedData.length
-      });
+      // Save to cache
+      HistoryFallbacks.cache.save('all', simplifiedData);
       setError('');
       
     } catch (err) {
@@ -321,12 +307,10 @@ const History = ({ user }) => {
       HistoryFallbacks.recordFailure();
       
       // FAIL SAFE: Try cache as fallback
-      const cached = HistoryFallbacks.cache.load(`page_${pageNum}`, 86400000);
+      const cached = HistoryFallbacks.cache.load('all', 86400000);
       if (cached) {
-        const simplified = cached.bookings.map(HistoryFallbacks.simplifyPayment);
+        const simplified = cached.map(HistoryFallbacks.simplifyPayment);
         setBookings(simplified);
-        setTotalPages(cached.totalPages);
-        setTotalBookings(cached.total);
         applyViewFilter(simplified, activeView);
         
         if (err.message === 'Request timeout') {
@@ -367,31 +351,22 @@ const History = ({ user }) => {
   useEffect(() => {
     const unsubscribe = HistoryFallbacks.network.subscribe((isOnline) => {
       if (isOnline && error) {
-        fetchHistory(true, page);
+        fetchHistory(true);
       }
     });
     
     return unsubscribe;
-  }, [error, page]);
+  }, [error]);
 
   // FAIL SAFE: Load from cache immediately if available
   useEffect(() => {
     if (initialCachedData) {
       const simplified = initialCachedData.map(HistoryFallbacks.simplifyPayment);
       setBookings(simplified);
-      setTotalPages(1);
-      setTotalBookings(simplified.length);
       applyViewFilter(simplified, activeView);
     }
-    fetchHistory(false, 1);
+    fetchHistory();
   }, []);
-
-  // Fetch when page changes
-  useEffect(() => {
-    if (page > 1 || bookings.length > 0) {
-      fetchHistory(false, page);
-    }
-  }, [page]);
 
   // Apply view filter when activeView changes
   useEffect(() => {
@@ -521,16 +496,11 @@ const History = ({ user }) => {
 
   const handleRetry = () => {
     setRetryCount(prev => prev + 1);
-    fetchHistory(true, page);
+    fetchHistory(true);
   };
 
   const handleExport = () => {
     HistoryFallbacks.exportBookings(filteredBookings);
-  };
-
-  const handlePageChange = (newPage) => {
-    setPage(newPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Calculate revenue
@@ -545,126 +515,6 @@ const History = ({ user }) => {
     : 0;
 
   const categorized = HistoryFallbacks.categorizeBookings(bookings);
-
-  // Pagination Controls Component
-  const PaginationControls = () => {
-    if (totalPages <= 1) return null;
-    
-    return (
-      <div className="pagination-controls" style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: '10px',
-        marginTop: '30px',
-        padding: '20px 0',
-        flexWrap: 'wrap'
-      }}>
-        <button
-          onClick={() => handlePageChange(1)}
-          disabled={page === 1}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '20px',
-            border: '1px solid #ddd',
-            background: page === 1 ? '#f5f5f5' : '#fff',
-            cursor: page === 1 ? 'not-allowed' : 'pointer',
-            fontSize: '0.85rem'
-          }}
-        >
-          ⏮️ First
-        </button>
-        
-        <button
-          onClick={() => handlePageChange(page - 1)}
-          disabled={page === 1}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: '1px solid #ddd',
-            background: page === 1 ? '#f5f5f5' : '#fff',
-            cursor: page === 1 ? 'not-allowed' : 'pointer'
-          }}
-        >
-          ← Previous
-        </button>
-        
-        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-          {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-            let pageNum;
-            if (totalPages <= 5) {
-              pageNum = i + 1;
-            } else if (page <= 3) {
-              pageNum = i + 1;
-            } else if (page >= totalPages - 2) {
-              pageNum = totalPages - 4 + i;
-            } else {
-              pageNum = page - 2 + i;
-            }
-            
-            return (
-              <button
-                key={pageNum}
-                onClick={() => handlePageChange(pageNum)}
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: '20px',
-                  border: '1px solid #ddd',
-                  background: page === pageNum ? '#0071e3' : '#fff',
-                  color: page === pageNum ? 'white' : '#333',
-                  cursor: 'pointer',
-                  fontWeight: page === pageNum ? '600' : '400',
-                  minWidth: '40px'
-                }}
-              >
-                {pageNum}
-              </button>
-            );
-          })}
-        </div>
-        
-        <button
-          onClick={() => handlePageChange(page + 1)}
-          disabled={page === totalPages}
-          style={{
-            padding: '8px 16px',
-            borderRadius: '20px',
-            border: '1px solid #ddd',
-            background: page === totalPages ? '#f5f5f5' : '#fff',
-            cursor: page === totalPages ? 'not-allowed' : 'pointer'
-          }}
-        >
-          Next →
-        </button>
-        
-        <button
-          onClick={() => handlePageChange(totalPages)}
-          disabled={page === totalPages}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '20px',
-            border: '1px solid #ddd',
-            background: page === totalPages ? '#f5f5f5' : '#fff',
-            cursor: page === totalPages ? 'not-allowed' : 'pointer',
-            fontSize: '0.85rem'
-          }}
-        >
-          ⏭️ Last
-        </button>
-        
-        <span style={{ 
-          marginLeft: '10px', 
-          color: '#666', 
-          fontSize: '0.85rem',
-          background: '#f5f5f5',
-          padding: '4px 12px',
-          borderRadius: '16px'
-        }}>
-          {totalBookings} total bookings
-        </span>
-      </div>
-    );
-  };
 
   if (loading && !bookings.length) {
     return (
@@ -780,8 +630,7 @@ const History = ({ user }) => {
         gap: '10px',
         marginBottom: '20px',
         borderBottom: '1px solid rgba(0,0,0,0.1)',
-        paddingBottom: '10px',
-        flexWrap: 'wrap'
+        paddingBottom: '10px'
       }}>
         <button
           onClick={() => setActiveView('today')}
@@ -841,7 +690,7 @@ const History = ({ user }) => {
             fontWeight: activeView === 'all' ? '600' : '400'
           }}
         >
-          All Time ({totalBookings})
+          All Time ({bookings.length})
         </button>
       </div>
 
@@ -1057,9 +906,6 @@ const History = ({ user }) => {
           </tbody>
         </table>
       </div>
-
-      {/* Pagination Controls */}
-      <PaginationControls />
 
       {/* Booking Details Modal */}
       {showModal && selectedBooking && (
