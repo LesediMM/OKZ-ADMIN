@@ -876,17 +876,7 @@ const History = ({ user }) => {
               <tr>
                 <td colSpan="7" className="no-results">
                   <div className="empty-state">
-                    <p>
-                      {searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all'
-                        ? 'No bookings match your filters' 
-                        : activeView === 'past' 
-                          ? 'No bookings from the last 30 days' 
-                          : activeView === 'upcoming' 
-                            ? 'No bookings in the next 30 days'
-                            : activeView === 'today'
-                              ? 'No bookings for today'
-                              : 'No bookings available'}
-                    </p>
+                  <p>...</p>
                     {(searchTerm || dateRange.start || dateRange.end || courtFilter !== 'all' || statusFilter !== 'all') && (
                       <button 
                         className="clear-filters-btn"
