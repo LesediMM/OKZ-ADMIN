@@ -58,7 +58,7 @@
       }
     </style>
     
-    <!-- FAIL HARD: Script error recovery -->
+    <!-- FAIL HARD: Script error recovery - FIXED: Wait for DOM to be ready -->
     <script>
       window.__OKZ_ADMIN_FALLBACKS = {
         showFallbackUI(error) {
@@ -94,17 +94,50 @@
           }, 8000);
         },
         
+        // FIXED: Wait for DOM to be ready before accessing body
         validateStructure() {
+          // Check if DOM is already loaded
+          if (document.readyState === 'loading') {
+            // Wait for DOMContentLoaded to ensure body exists
+            document.addEventListener('DOMContentLoaded', () => {
+              this._validateStructure();
+            });
+          } else {
+            // DOM is already loaded, execute immediately
+            this._validateStructure();
+          }
+        },
+        
+        _validateStructure() {
           const root = document.getElementById('root');
           if (!root) {
             console.error('[HTML] Missing #root element');
-            const newRoot = document.createElement('div');
-            newRoot.id = 'root';
-            document.body.appendChild(newRoot);
+            // Now body is guaranteed to exist because we waited for DOMContentLoaded
+            if (document.body) {
+              const newRoot = document.createElement('div');
+              newRoot.id = 'root';
+              document.body.appendChild(newRoot);
+              console.log('[HTML] Created fallback #root element');
+            } else {
+              console.error('[HTML] Body still not available - this should not happen');
+            }
+          } else {
+            console.log('[HTML] #root element found');
           }
         },
         
         preconnect() {
+          // Only run after DOM is ready
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+              this._preconnect();
+            });
+          } else {
+            this._preconnect();
+          }
+        },
+        
+        _preconnect() {
           const origins = [
             'https://okz.onrender.com',
             'https://fonts.googleapis.com',
@@ -112,16 +145,20 @@
           ];
           
           origins.forEach(origin => {
-            const link = document.createElement('link');
-            link.rel = 'preconnect';
-            link.href = origin;
-            link.crossOrigin = 'anonymous';
-            document.head.appendChild(link);
+            try {
+              const link = document.createElement('link');
+              link.rel = 'preconnect';
+              link.href = origin;
+              link.crossOrigin = 'anonymous';
+              document.head.appendChild(link);
+            } catch (e) {
+              console.warn('[HTML] Failed to preconnect to', origin, e);
+            }
           });
         }
       };
       
-      // Initialize
+      // Initialize - now safe because validateStructure waits for DOM
       window.__OKZ_ADMIN_FALLBACKS.validateStructure();
       window.__OKZ_ADMIN_FALLBACKS.preconnect();
       window.__OKZ_ADMIN_FALLBACKS.startLoadTimer();
@@ -196,7 +233,7 @@
       </style>
     </div>
 
-    <!-- FAIL SAFE: Noscript fallback - MOVED TO BODY WHERE IT BELONGS -->
+    <!-- FAIL SAFE: Noscript fallback -->
     <noscript>
       <style>
         #root {
