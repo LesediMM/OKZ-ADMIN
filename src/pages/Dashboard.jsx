@@ -8,8 +8,26 @@ const Dashboard = ({ user }) => {
   const [error, setError] = useState('');
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [cachedData, setCachedData] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
+  
+  // Create booking form state
+  const [createForm, setCreateForm] = useState({
+    email: '',
+    fullName: '',
+    courtType: 'padel',
+    courtNumber: '1',
+    date: '',
+    timeSlot: '10:00',
+    duration: 1,
+    phoneNumber: '',
+    notes: '',
+    paymentStatus: 'paid'
+  });
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createSuccess, setCreateSuccess] = useState('');
   
   const navigate = useNavigate();
 
@@ -293,26 +311,106 @@ const Dashboard = ({ user }) => {
     }
   };
 
-  // FAIL SAFE: Network status subscription
-  useEffect(() => {
-    const unsubscribe = DashboardFallbacks.network.subscribe((isOnline) => {
-      if (isOnline && error) {
-        // Auto-retry when coming back online
-        fetchOverviewData(true);
-      }
-    });
-    
-    return unsubscribe;
-  }, [error]);
+  // Handle create booking submission
+  const handleCreateBooking = async (e) => {
+    e.preventDefault();
+    setCreateLoading(true);
+    setCreateError('');
+    setCreateSuccess('');
 
-  // FAIL SAFE: Load from cache immediately if available
-  useEffect(() => {
-    if (initialCachedData) {
-      setOverviewData(initialCachedData);
-      setCachedData(initialCachedData);
+    try {
+      // Validate required fields
+      if (!createForm.email || !createForm.date || !createForm.timeSlot) {
+        throw new Error('Please fill in all required fields');
+      }
+
+      // Prepare the data for API
+      const bookingData = {
+        email: createForm.email,
+        fullName: createForm.fullName || createForm.email.split('@')[0],
+        courtType: createForm.courtType,
+        courtNumber: parseInt(createForm.courtNumber),
+        date: createForm.date,
+        timeSlot: createForm.timeSlot,
+        duration: parseInt(createForm.duration),
+        phoneNumber: createForm.phoneNumber || '',
+        notes: createForm.notes || '',
+        paymentStatus: createForm.paymentStatus
+      };
+
+      const response = await DashboardFallbacks.withTimeout(
+        fetch('https://okz.onrender.com/api/v1/admin/bookings', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('adminToken')}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(bookingData)
+        }),
+        10000
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Failed to create booking');
+      }
+
+      // Show success message
+      setCreateSuccess(data.message || 'Booking created successfully!');
+      
+      // Reset form
+      setCreateForm({
+        email: '',
+        fullName: '',
+        courtType: 'padel',
+        courtNumber: '1',
+        date: '',
+        timeSlot: '10:00',
+        duration: 1,
+        phoneNumber: '',
+        notes: '',
+        paymentStatus: 'paid'
+      });
+
+      // Close modal after 2 seconds and refresh data
+      setTimeout(() => {
+        setShowCreateModal(false);
+        setCreateSuccess('');
+        fetchOverviewData(true);
+      }, 2000);
+
+    } catch (err) {
+      console.error('Create booking error:', err);
+      setCreateError(err.message || 'Failed to create booking');
+    } finally {
+      setCreateLoading(false);
     }
-    fetchOverviewData();
-  }, []);
+  };
+
+  const handleCreateFormChange = (e) => {
+    const { name, value } = e.target;
+    setCreateForm(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Get today's date for min date validation
+  const getMinDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  };
+
+  // Get max date (30 days from now)
+  const getMaxDate = () => {
+    const max = new Date();
+    max.setDate(max.getDate() + 30);
+    return max.toISOString().split('T')[0];
+  };
+
+  // Generate time slot options (8:00 to 21:00)
+  const timeSlots = [];
+  for (let hour = 8; hour <= 21; hour++) {
+    timeSlots.push(`${hour.toString().padStart(2, '0')}:00`);
+  }
 
   const handleRetry = () => {
     setRetryCount(prev => prev + 1);
@@ -442,9 +540,30 @@ const Dashboard = ({ user }) => {
             })}
           </span>
         </div>
-        <button onClick={() => navigate('/history')} className="quick-action">
-          View Full History →
-        </button>
+        <div className="header-right" style={{ display: 'flex', gap: '12px' }}>
+          <button 
+            onClick={() => setShowCreateModal(true)} 
+            className="create-booking-btn"
+            style={{
+              background: '#28a745',
+              color: 'white',
+              border: 'none',
+              padding: '10px 20px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.9rem',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.background = '#218838'}
+            onMouseLeave={(e) => e.target.style.background = '#28a745'}
+          >
+            + Create Booking
+          </button>
+          <button onClick={() => navigate('/history')} className="quick-action">
+            View Full History →
+          </button>
+        </div>
       </header>
 
       {/* Stats Grid */}
@@ -593,6 +712,231 @@ const Dashboard = ({ user }) => {
           <span className="action-text">Refresh Data</span>
         </button>
       </div>
+
+      {/* Create Booking Modal */}
+      {showCreateModal && (
+        <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
+          <div className="modal-content create-booking-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '550px' }}>
+            <div className="modal-header">
+              <h2>Create New Booking</h2>
+              <button className="close-modal" onClick={() => setShowCreateModal(false)}>✕</button>
+            </div>
+            
+            <form onSubmit={handleCreateBooking}>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                {createError && (
+                  <div style={{
+                    backgroundColor: '#f8d7da',
+                    border: '1px solid #f5c6cb',
+                    color: '#721c24',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    fontSize: '0.85rem'
+                  }}>
+                    ❌ {createError}
+                  </div>
+                )}
+                
+                {createSuccess && (
+                  <div style={{
+                    backgroundColor: '#d4edda',
+                    border: '1px solid #c3e6cb',
+                    color: '#155724',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    marginBottom: '16px',
+                    fontSize: '0.85rem'
+                  }}>
+                    ✅ {createSuccess}
+                  </div>
+                )}
+
+                {/* User Information */}
+                <div className="detail-section">
+                  <h3>Customer Information</h3>
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Email *</label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={createForm.email}
+                      onChange={handleCreateFormChange}
+                      required
+                      placeholder="customer@example.com"
+                      style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Full Name</label>
+                    <input
+                      type="text"
+                      name="fullName"
+                      value={createForm.fullName}
+                      onChange={handleCreateFormChange}
+                      placeholder="Leave blank to use email prefix"
+                      style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Phone Number</label>
+                    <input
+                      type="tel"
+                      name="phoneNumber"
+                      value={createForm.phoneNumber}
+                      onChange={handleCreateFormChange}
+                      placeholder="+201234567890"
+                      style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Booking Details */}
+                <div className="detail-section">
+                  <h3>Booking Details</h3>
+                  <div className="form-row" style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Court Type *</label>
+                      <select
+                        name="courtType"
+                        value={createForm.courtType}
+                        onChange={handleCreateFormChange}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      >
+                        <option value="padel">Padel (400 EGP/hour)</option>
+                        <option value="tennis">Tennis (150 EGP/hour)</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Court Number *</label>
+                      <select
+                        name="courtNumber"
+                        value={createForm.courtNumber}
+                        onChange={handleCreateFormChange}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      >
+                        {createForm.courtType === 'padel' ? (
+                          <>
+                            <option value="1">Court 1</option>
+                            <option value="2">Court 2</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="3">Court 3</option>
+                            <option value="4">Court 4</option>
+                            <option value="5">Court 5</option>
+                          </>
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-row" style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Date *</label>
+                      <input
+                        type="date"
+                        name="date"
+                        value={createForm.date}
+                        onChange={handleCreateFormChange}
+                        required
+                        min={getMinDate()}
+                        max={getMaxDate()}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Time Slot *</label>
+                      <select
+                        name="timeSlot"
+                        value={createForm.timeSlot}
+                        onChange={handleCreateFormChange}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      >
+                        {timeSlots.map(slot => (
+                          <option key={slot} value={slot}>{slot}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-row" style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Duration (hours) *</label>
+                      <select
+                        name="duration"
+                        value={createForm.duration}
+                        onChange={handleCreateFormChange}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      >
+                        <option value={1}>1 hour</option>
+                        <option value={2}>2 hours</option>
+                        <option value={3}>3 hours</option>
+                        <option value={4}>4 hours</option>
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Payment Status</label>
+                      <select
+                        name="paymentStatus"
+                        value={createForm.paymentStatus}
+                        onChange={handleCreateFormChange}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd' }}
+                      >
+                        <option value="paid">Paid</option>
+                        <option value="pending">Pending</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Notes</label>
+                    <textarea
+                      name="notes"
+                      value={createForm.notes}
+                      onChange={handleCreateFormChange}
+                      placeholder="Any special requests or notes..."
+                      rows="3"
+                      style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ddd', resize: 'vertical' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '12px', padding: '10px', background: '#f8f9fa', borderRadius: '6px' }}>
+                  <span>ℹ️ If the user doesn't exist, they will be automatically created with a random password.</span>
+                </div>
+              </div>
+              
+              <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', padding: '16px', borderTop: '1px solid #eee' }}>
+                <button 
+                  type="button" 
+                  className="modal-btn secondary" 
+                  onClick={() => setShowCreateModal(false)}
+                  style={{ padding: '10px 20px', borderRadius: '6px', border: '1px solid #ddd', background: 'white', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="modal-btn primary"
+                  disabled={createLoading}
+                  style={{ 
+                    padding: '10px 24px', 
+                    borderRadius: '6px', 
+                    border: 'none', 
+                    background: '#28a745', 
+                    color: 'white', 
+                    cursor: createLoading ? 'not-allowed' : 'pointer',
+                    opacity: createLoading ? 0.7 : 1
+                  }}
+                >
+                  {createLoading ? 'Creating...' : 'Create Booking'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Booking Details Modal */}
       {showModal && selectedBooking && (
